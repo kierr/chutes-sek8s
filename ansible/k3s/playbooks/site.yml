@@ -1,0 +1,54 @@
+---
+- name: Common Setup
+  hosts: all
+  become: true
+  tags:
+    - common
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Include common role
+      ansible.builtin.include_role:
+        name: common
+
+- name: Setup K3S clusters
+  hosts: all
+  become: true
+  tags:
+    - k3s
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Include k3s role
+      ansible.builtin.include_role:
+        name: k3s
+
+- name: GPU Setup
+  hosts: workers
+  become: true
+  tags:
+    - gpu
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Include gpu role
+      ansible.builtin.include_role:
+        name: gpu
+
+- name: Setup Chutes GPU Clusters
+  hosts: all
+  become: true
+  tags:
+    - chutes-gpu
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Setup GPU Node
+      ansible.builtin.include_role:
+        name: chutes-gpu
+        apply:
+          tags: chutes-gpu
