@@ -27,4 +27,15 @@ echo "Cleaning up..."
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/app
 
+echo "Configuring first-boot script..."
+mkdir -p /root/scripts
+cp /tmp/app/first-boot.sh /root/scripts/first-boot.sh
+chmod +x /root/scripts/first-boot.sh
+
+echo "Setting up cloud-init to run first-boot script..."
+cat > /etc/cloud/cloud.cfg.d/99-first-boot.cfg << 'EOF'
+runcmd:
+  - /root/scripts/first-boot.sh
+EOF
+
 echo "Application setup completed."
