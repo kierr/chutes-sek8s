@@ -15,6 +15,9 @@ LOGFILE="$REPO_ROOT/tdx-image-build.log"
 CREATE_TD_SCRIPT="$TDX_REPO/guest-tools/image/create-td-image.sh"
 GUEST_IMG_PATH="$TDX_REPO/guest-tools/image/tdx-guest-ubuntu-$UBUNTU_VERSION-generic.qcow2"
 
+# Clear existing logfile
+echo "" > "$LOGFILE"
+
 # Ensure prerequisites
 echo "Installing dependencies..." | tee -a "$LOGFILE"
 sudo apt update >> "$LOGFILE" 2>&1
@@ -62,6 +65,7 @@ fi
 
 # Apply custom setup steps
 echo "Applying custom setup steps to TDX guest image..." | tee -a "$LOGFILE"
+echo "$FIRST_BOOT_SCRIPT"
 sudo virt-customize -a "$GUEST_IMG_PATH" \
     --mkdir /tmp/app \
     --mkdir /tmp/app/ansible \
@@ -94,4 +98,4 @@ sudo chmod o+x "$HOME_DIR" >> "$LOGFILE" 2>&1
 
 # Output result
 echo "TDX guest image created: $GUEST_IMG_PATH" | tee -a "$LOGFILE"
-echo "Run '$REPO_ROOT/scripts/test-vm.sh' to test the image locally." | tee -a "$LOGFILE"
+echo "Run '$REPO_ROOT/scripts/tdx/test-vm.sh' to test the image locally." | tee -a "$LOGFILE"

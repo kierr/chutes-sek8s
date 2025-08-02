@@ -16,26 +16,29 @@ echo "Copying Ansible playbooks..."
 mkdir -p /root/ansible
 cp -r /tmp/app/ansible/* /root/ansible/
 
+cwd=$(pwd)
+cd /root/ansible/k3s
 echo "Running Ansible playbook..."
-ansible-playbook /root/ansible/main.yml
+# ansible-playbook /root/ansible/k3s/playbooks/site.yml
+cd $cwd
 
 echo "Configuring application environment..."
 # Add subnet-specific configuration here
 echo "export APP_CONFIG=/root/app/config" >> /root/.bashrc
-
-echo "Cleaning up..."
-apt-get clean
-rm -rf /var/lib/apt/lists/* /tmp/app
 
 echo "Configuring first-boot script..."
 mkdir -p /root/scripts
 cp /tmp/app/first-boot.sh /root/scripts/first-boot.sh
 chmod +x /root/scripts/first-boot.sh
 
-echo "Setting up cloud-init to run first-boot script..."
-cat > /etc/cloud/cloud.cfg.d/99-first-boot.cfg << 'EOF'
-runcmd:
-  - /root/scripts/first-boot.sh
-EOF
+# echo "Setting up cloud-init to run first-boot script..."
+# cat > /etc/cloud/cloud.cfg.d/99-first-boot.cfg << 'EOF'
+# runcmd:
+#   - /root/scripts/first-boot.sh
+# EOF
+
+echo "Cleaning up..."
+apt-get clean
+rm -rf /var/lib/apt/lists/* /tmp/app
 
 echo "Application setup completed."

@@ -121,8 +121,8 @@ log "Connect to the VM using one of the following methods:"
 log "1. VNC: Run 'vncviewer localhost:$VNC_PORT' to access the graphical console."
 log "2. Console: Run 'virsh console $VM_NAME' to access the text console (exit with Ctrl+])."
 log "Default credentials (if not customized):"
-log "  Username: ubuntu"
-log "  Password: None (passwordless sudo)"
+log "  Username: tdx"
+log "  Password: 123456"
 log "To customize credentials, edit cloud-init in setup-app.sh or check tdx/guest-tools/image/cloud-init/."
 
 # Validate custom setup
