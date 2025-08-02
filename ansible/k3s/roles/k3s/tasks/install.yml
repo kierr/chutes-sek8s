@@ -30,8 +30,6 @@
           - --write-kubeconfig-mode 644
           - --disable servicelb
           - --disable traefik
-          - --node-ip {{ ansible_host }}
-          - --advertise-address {{ ansible_host }}
       environment:
         INSTALL_K3S_SKIP_START: "true"
         INSTALL_K3S_VERSION: "{{ k3s_version }}"

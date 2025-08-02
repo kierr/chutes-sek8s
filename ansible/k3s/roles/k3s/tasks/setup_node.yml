@@ -103,3 +103,8 @@
       ansible.builtin.command:
         cmd: k3s kubectl get nodes
       changed_when: false
+
+    - name: Copy k3s kubeconfig
+      ansible.builtin.copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ~/.kube/config
