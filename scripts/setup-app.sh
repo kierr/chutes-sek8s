@@ -12,6 +12,10 @@ export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 
+# echo "Copying app..."
+# mkdir -p /root/app
+# cp -r /tmp/app/* /root/app/
+
 echo "Copying Ansible playbooks..."
 mkdir -p /root/ansible
 cp -r /tmp/app/ansible/* /root/ansible/
@@ -19,7 +23,7 @@ cp -r /tmp/app/ansible/* /root/ansible/
 cwd=$(pwd)
 cd /root/ansible/k3s
 echo "Running Ansible playbook..."
-ansible-playbook playbooks/site.yml
+# ansible-playbook playbooks/site.yml
 cd $cwd
 
 echo "Configuring application environment..."

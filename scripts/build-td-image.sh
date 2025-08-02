@@ -69,7 +69,7 @@ sudo virt-customize -a "$GUEST_IMG_PATH" \
     --mkdir /tmp/app/ansible \
     --mkdir /tmp/app/boot \
     --copy-in "$APP_SCRIPT:/tmp/app/" \
-    --copy-in "$ANSIBLE_DIR:/tmp/app/ansible/" \
+    --copy-in "$ANSIBLE_DIR:/tmp/app/" \
     --copy-in "$BOOT_SCRIPTS_DIR:/tmp/app/" \
     --run-command "/tmp/app/setup-app.sh" >> "$LOGFILE" 2>&1
 if [ $? = 0 ]; then
