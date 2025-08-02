@@ -55,15 +55,11 @@
 
 - name: Setup system packages
   block:
-    - name: Clean apt cache
-      ansible.builtin.apt:
-        autoclean: true
-        autoremove: true
-
-    - name: Update apt cache
-      ansible.builtin.apt:
-        update_cache: true
-        cache_valid_time: 3600
+    - name: Clean and update apt cache
+      ansible.builtin.shell: |
+        apt clean
+        apt update
+      changed_when: true
 
     - name: Gather package facts
       ansible.builtin.package_facts:
