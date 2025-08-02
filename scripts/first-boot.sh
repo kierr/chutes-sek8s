@@ -58,9 +58,24 @@ else
         log "Appended node-name: $NODE_NAME to /etc/rancher/k3s/config.yaml"
     fi
 fi
-# Restart k3s to apply node name
+# Update k3s service definition with --tls-san
+K3S_SERVICE_FILE="/etc/systemd/system/k3s.service"
+if [ -f "$K3S_SERVICE_FILE" ]; then
+    if grep -q '^ExecStart=.*--tls-san' "$K3S_SERVICE_FILE"; then
+        sed -i "s/--tls-san [^ ]*/--tls-san $NODE_IP/" "$K3S_SERVICE_FILE"
+        log "Updated --tls-san to $NODE_IP in $K3S_SERVICE_FILE"
+    else
+        sed -i "/^ExecStart=/ s|$| --tls-san $NODE_IP|" "$K3S_SERVICE_FILE"
+        log "Appended --tls-san $NODE_IP to ExecStart in $K3S_SERVICE_FILE"
+    fi
+else
+    log "Error: $K3S_SERVICE_FILE not found"
+    exit 1
+fi
+# Reload systemd and restart k3s
+systemctl daemon-reload
 if systemctl is-active --quiet k3s; then
-    log "Restarting k3s to apply node name..."
+    log "Restarting k3s to apply node name and TLS SAN..."
     systemctl restart k3s
 else
     log "Starting k3s service..."
