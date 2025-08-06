@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UBUNTU_VERSION="25.04"
-IMAGE_PATH="$TDX_REPO/image/tdx-guest-ubuntu-$UBUNTU_VERSION.qcow2"
+IMAGE_PATH="$TDX_REPO/image/tdx-guest-ubuntu-$UBUNTU_VERSION-final.qcow2"
 VM_NAME="tdx-test-vm"
 LOGFILE="tdx-test-vm.log"
 VNC_PORT="5900"

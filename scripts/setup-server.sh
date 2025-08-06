@@ -16,11 +16,11 @@ update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 echo "Configuring first-boot scripts..."
 chmod +x /root/scripts/boot/*.sh
 
-# echo "Setting up cloud-init to run first-boot scripts..."
-# cat > /etc/cloud/cloud.cfg.d/99-first-boot.cfg << 'EOF'
-# runcmd:
-#   - for script in /root/scripts/boot/*.sh; do [ -f "$script" ] && bash "$script"; done
-# EOF
+echo "Setting up cloud-init to run first-boot scripts..."
+cat > /etc/cloud/cloud.cfg.d/99-first-boot.cfg << 'EOF'
+runcmd:
+  - for script in /root/scripts/boot/*.sh; do [ -f "$script" ] && bash "$script"; done
+EOF
 
 echo "Running Ansible playbook for k3s and system setup..."
 cwd=$(pwd)

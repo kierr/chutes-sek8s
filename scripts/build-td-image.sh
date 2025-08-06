@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Configuration
 TDX_REPO="$REPO_ROOT/tdx"
 UBUNTU_VERSION="25.04"
-BOOT_SCRIPT="${BOOT_SCRIPT:-$REPO_ROOT/scripts/setup-app.sh}"
+BOOT_SCRIPT="${BOOT_SCRIPT:-$REPO_ROOT/scripts/setup-server.sh}"
 ANSIBLE_DIR="${ANSIBLE_DIR:-$REPO_ROOT/ansible}"
 BOOT_SCRIPTS_DIR="${BOOT_SCRIPTS_DIR:-$REPO_ROOT/scripts/boot}"
 LOGFILE="$REPO_ROOT/tdx-image-build.log"
@@ -231,7 +231,7 @@ fi
 
 # Verify final image
 log "Verifying final image..."
-qemu-img check "$FINAL_IMG_PATH" >> "$LOGFILE" 2>&1
+sudo qemu-img check "$FINAL_IMG_PATH" >> "$LOGFILE" 2>&1
 if [ $? -eq 0 ]; then
     log "Final image verification passed"
 else
