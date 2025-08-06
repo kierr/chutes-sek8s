@@ -2,8 +2,10 @@
 set -e
 
 # Configuration
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UBUNTU_VERSION="25.04"
-IMAGE_PATH="tdx/guest-tools/image/tdx-guest-ubuntu-$UBUNTU_VERSION-generic.qcow2"
+IMAGE_PATH="$TDX_REPO/image/tdx-guest-ubuntu-$UBUNTU_VERSION.qcow2"
 VM_NAME="tdx-test-vm"
 LOGFILE="tdx-test-vm.log"
 VNC_PORT="5900"
@@ -133,7 +135,6 @@ fi
 
 # Provide connection instructions
 log "Connect to the VM using one of the following methods:"
-log "1. VNC: Run 'vncviewer localhost:$VNC_PORT' to access the graphical console."
 log "2. Console: Run 'virsh console $VM_NAME' to access the text console (exit with Ctrl+])."
 log "Default credentials (if not customized):"
 log "  Username: tdx"
@@ -141,15 +142,10 @@ log "  Password: 123456"
 log "To customize credentials, edit cloud-init in setup-app.sh or check tdx/guest-tools/image/cloud-init/."
 
 # Validate custom setup
-log "Validating custom setup (connect to VM to run these checks):"
-log "1. Check installed packages: 'dpkg -l | grep -E \"ansible|docker|python3\"'"
-log "2. Verify Ansible playbooks: 'ls /root/ansible/'"
-log "3. Check k3s (if installed): 'sudo systemctl status k3s' and 'kubectl get nodes'"
-log "4. Check environment variables: 'cat /root/.bashrc | grep APP_CONFIG'"
-log "5. Check Bittensor (if installed): 'which btcli' or 'sudo systemctl status bittensor'"
 if [ -f "$USER_DATA_FILE" ]; then
-    log "6. Check user-data: 'cat /var/lib/cloud/instance/user-data.txt'"
-    log "7. Check hostname: 'hostname' and 'cat /etc/hostname'"
+    log "Validating custom setup (connect to VM to run these checks):"
+    log "1. Check user-data: 'cat /var/lib/cloud/instance/user-data.txt'"
+    log "2. Check hostname: 'hostname' and 'cat /etc/hostname'"
 fi
 
 # Instructions for cleanup

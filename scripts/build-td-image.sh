@@ -8,93 +8,237 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Configuration
 TDX_REPO="$REPO_ROOT/tdx"
 UBUNTU_VERSION="25.04"
-APP_SCRIPT="${APP_SCRIPT:-$REPO_ROOT/scripts/setup-app.sh}"
+BOOT_SCRIPT="${BOOT_SCRIPT:-$REPO_ROOT/scripts/setup-app.sh}"
 ANSIBLE_DIR="${ANSIBLE_DIR:-$REPO_ROOT/ansible}"
 BOOT_SCRIPTS_DIR="${BOOT_SCRIPTS_DIR:-$REPO_ROOT/scripts/boot}"
 LOGFILE="$REPO_ROOT/tdx-image-build.log"
-CREATE_TD_SCRIPT="$TDX_REPO/guest-tools/image/create-td-image.sh"
 GUEST_IMG_PATH="$TDX_REPO/guest-tools/image/tdx-guest-ubuntu-$UBUNTU_VERSION-generic.qcow2"
+IMG_DIR="$REPO_ROOT/image"
+SEK8S_IMG_PATH="$IMG_DIR/tdx-guest-ubuntu-$UBUNTU_VERSION.qcow2"
+FINAL_IMG_PATH="$IMG_DIR/tdx-guest-ubuntu-$UBUNTU_VERSION-final.qcow2"
+VM_NAME="tdx-build"
+VNC_PORT="5901"
+USER_DATA_FILE="local/user-data.yaml"
+CLOUD_INIT_DIR="$REPO_ROOT/local/cloud-init"
+USER_DATA_FILE="$CLOUD_INIT_DIR/user-data"
+NO_CACHE="${NO_CACHE:-false}"
+DEBUG="${DEBUG:-false}"
 
-# Clear existing logfile
+# Log function
+log() {
+    echo "$1" | tee -a "$LOGFILE"
+}
+
+DEBUG=$(echo "$DEBUG" | tr '[:upper:]' '[:lower:]')
+
 echo "" > "$LOGFILE"
 
 # Ensure prerequisites
-echo "Installing dependencies..." | tee -a "$LOGFILE"
+log "Installing dependencies..."
 sudo apt update >> "$LOGFILE" 2>&1
 sudo apt install -y git libguestfs-tools virtinst genisoimage libvirt-daemon-system >> "$LOGFILE" 2>&1
 
 # Fix libvirt default network
-echo "Ensuring libvirt default network is active..." | tee -a "$LOGFILE"
+log "Ensuring libvirt default network is active..."
 sudo virsh net-start default >> "$LOGFILE" 2>&1 || true
 sudo virsh net-autostart default >> "$LOGFILE" 2>&1 || true
 
-# Clone or update canonical/tdx
-if [ ! -d "$TDX_REPO" ]; then
-    echo "Initializing canonical/tdx submodule..." | tee -a "$LOGFILE"
-    git -C "$REPO_ROOT" submodule update --init --recursive >> "$LOGFILE" 2>&1
+# Ensure base image exists
+if [ ! -f "$GUEST_IMG_PATH" ]; then
+    log "Base image does not exist. Run build-base-image.sh."
+    exit 1
 fi
-cd "$TDX_REPO"
-echo "Checking out main branch for canonical/tdx..." | tee -a "$LOGFILE"
-git checkout main >> "$LOGFILE" 2>&1
-cd "$REPO_ROOT"
+
+# Handle NO_CACHE
+NO_CACHE=$(echo "$NO_CACHE" | tr '[:upper:]' '[:lower:]')
+if [ "$NO_CACHE" = "true" ]; then
+    log "NO_CACHE=true, forcing fresh copy of base image..."
+    rm -f "$SEK8S_IMG_PATH" >> "$LOGFILE" 2>&1
+fi
+if [ ! -f "$SEK8S_IMG_PATH" ]; then
+    mkdir -p "$IMG_DIR"
+    sudo cp "$GUEST_IMG_PATH" "$SEK8S_IMG_PATH"
+fi
 
 # Ensure scripts and directories exist
-if [ ! -f "$APP_SCRIPT" ]; then
-    echo "Error: $APP_SCRIPT not found. Please provide a valid setup script." | tee -a "$LOGFILE"
+if [ ! -f "$BOOT_SCRIPT" ]; then
+    log "Error: $BOOT_SCRIPT not found."
     exit 1
 fi
 if [ ! -d "$ANSIBLE_DIR" ]; then
-    echo "Error: $ANSIBLE_DIR not found. Please provide a valid Ansible directory." | tee -a "$LOGFILE"
+    log "Error: $ANSIBLE_DIR not found."
     exit 1
 fi
 if [ ! -d "$BOOT_SCRIPTS_DIR" ]; then
-    echo "Error: $BOOT_SCRIPTS_DIR not found. Please provide a valid boot scripts directory." | tee -a "$LOGFILE"
+    log "Error: $BOOT_SCRIPTS_DIR not found."
     exit 1
 fi
 
-# Run create-td-image.sh to generate base image
-echo "Building base TDX guest image..." | tee -a "$LOGFILE"
-cd "$TDX_REPO/guest-tools/image"
-sudo ./create-td-image.sh -v "$UBUNTU_VERSION" >> "$LOGFILE" 2>&1
-cd "$REPO_ROOT"
-if [ ! -f "$GUEST_IMG_PATH" ]; then
-    echo "Error: Failed to create base TDX guest image at $GUEST_IMG_PATH" | tee -a "$LOGFILE"
-    exit 1
-fi
+# Create user-data for temporary VM
+log "Creating temporary user-data..."
+mkdir -p "$(dirname "$USER_DATA_FILE")"
+cat > "$USER_DATA_FILE" << 'EOF'
+#cloud-config
+hostname: build-node
+timezone: UTC
+runcmd:
+  - /root/setup-app.sh > /var/log/setup-app.log 2>&1 && echo "SUCCESS" > /root/setup-app-done || echo "ERROR \$?" > /root/setup-app-done
+EOF
 
 # Apply custom setup steps
-echo "Applying custom setup steps to TDX guest image..." | tee -a "$LOGFILE"
-sudo virt-customize -a "$GUEST_IMG_PATH" \
-    --mkdir /tmp/app \
-    --mkdir /tmp/app/ansible \
-    --mkdir /tmp/app/boot \
-    --copy-in "$APP_SCRIPT:/tmp/app/" \
-    --copy-in "$ANSIBLE_DIR:/tmp/app/" \
-    --copy-in "$BOOT_SCRIPTS_DIR:/tmp/app/" \
-    --run-command "/tmp/app/setup-app.sh" >> "$LOGFILE" 2>&1
-if [ $? = 0 ]; then
-    echo "Successfully applied custom setup steps to TDX guest image" | tee -a "$LOGFILE"
+log "Applying custom setup steps to TDX guest image..."
+sudo virsh destroy "$VM_NAME" >/dev/null 2>&1 || true
+sudo virsh undefine "$VM_NAME" >/dev/null 2>&1 || true
+sudo virt-customize -a "$SEK8S_IMG_PATH" \
+    --install ansible,python3,python3-pip,curl,docker.io \
+    --mkdir /root/ansible \
+    --mkdir /root/scripts/boot \
+    --copy-in "$BOOT_SCRIPT:/root/" \
+    --copy-in "$ANSIBLE_DIR:/root/" \
+    --copy-in "$BOOT_SCRIPTS_DIR:/root/scripts" \
+    --chmod 755:/root/setup-app.sh \
+    --run-command 'find /root/scripts/boot -type f -name "*.sh" -exec chmod 755 {} \;'
+if [ $? -eq 0 ]; then
+    log "Successfully applied custom setup steps to TDX guest image"
 else
-    echo "Error: Failed to apply custom setup steps to TDX guest image" | tee -a "$LOGFILE"
+    log "Error: Failed to apply custom setup steps to TDX guest image"
     exit 1
 fi
 
 # Fix permissions for libvirt-qemu
-echo "Fixing permissions for $GUEST_IMG_PATH..." | tee -a "$LOGFILE"
-sudo chown root:libvirt-qemu "$GUEST_IMG_PATH" >> "$LOGFILE" 2>&1
-sudo chmod 640 "$GUEST_IMG_PATH" >> "$LOGFILE" 2>&1
-# Ensure all parent directories from $HOME to image directory have execute permissions
-ABS_GUEST_IMG_PATH=$(realpath "$GUEST_IMG_PATH")
-PARENT_DIR=$(dirname "$ABS_GUEST_IMG_PATH")
+log "Fixing permissions for $SEK8S_IMG_PATH..."
+sudo chown root:libvirt-qemu "$SEK8S_IMG_PATH" >> "$LOGFILE" 2>&1
+sudo chmod 640 "$SEK8S_IMG_PATH" >> "$LOGFILE" 2>&1
+ABS_SEK8S_IMG_PATH=$(realpath "$SEK8S_IMG_PATH")
+PARENT_DIR=$(dirname "$ABS_SEK8S_IMG_PATH")
 HOME_DIR=$(realpath "$HOME")
 while [ "$PARENT_DIR" != "/" ] && [ "$PARENT_DIR" != "$HOME_DIR" ]; do
-    echo "Setting execute permissions on $PARENT_DIR..." | tee -a "$LOGFILE"
+    log "Setting execute permissions on $PARENT_DIR..."
     sudo chmod o+x "$PARENT_DIR" >> "$LOGFILE" 2>&1
     PARENT_DIR=$(dirname "$PARENT_DIR")
 done
-echo "Setting execute permissions on $HOME_DIR..." | tee -a "$LOGFILE"
+log "Setting execute permissions on $HOME_DIR..."
 sudo chmod o+x "$HOME_DIR" >> "$LOGFILE" 2>&1
 
+# Start temporary VM
+log "Starting temporary VM $VM_NAME..."
+VIRT_TYPE="kvm"
+if ! kvm-ok >/dev/null 2>&1; then
+    log "Warning: KVM not available, using TCG"
+    VIRT_TYPE="qemu"
+fi
+
+virt-install \
+    --name "$VM_NAME" \
+    --ram 3072 \
+    --vcpus 2 \
+    --disk path="$SEK8S_IMG_PATH",format=qcow2 \
+    --os-variant ubuntu$UBUNTU_VERSION \
+    --virt-type "$VIRT_TYPE" \
+    --network network=default \
+    --graphics vnc,listen=0.0.0.0,port="$VNC_PORT" \
+    --import \
+    --cloud-init user-data="$USER_DATA_FILE" \
+    --noautoconsole >> "$LOGFILE" 2>&1
+if [ $? -ne 0 ]; then
+    log "Error: Failed to start temporary VM"
+    exit 1
+fi
+
+# Wait for VM to be running
+log "Waiting for VM $VM_NAME to be in running state..."
+for i in {1..60}; do
+    if virsh list --state-running | grep -q "$VM_NAME"; then
+        log "VM $VM_NAME is running"
+        break
+    fi
+    log "Waiting for VM to start ($i/60)..."
+    sleep 10
+done
+if ! virsh list --state-running | grep -q "$VM_NAME"; then
+    log "Error: VM $VM_NAME not running after 10 minutes"
+    virsh destroy "$VM_NAME" >/dev/null 2>&1 || true
+    virsh undefine "$VM_NAME" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+# Check setup-app.sh completion
+log "Checking setup-app.sh completion..."
+for i in {1..120}; do
+    if sudo virt-cat -a "$SEK8S_IMG_PATH" /root/setup-app-done > /tmp/setup-app-status 2>/dev/null; then
+        if grep -q "SUCCESS" /tmp/setup-app-status; then
+            log "Ansible playbook completed successfully"
+            sudo virt-cat -a "$SEK8S_IMG_PATH" /var/log/setup-app.log >> "$LOGFILE" 2>&1
+            break
+        elif grep -q "ERROR" /tmp/setup-app-status; then
+            log "Error: setup-app.sh failed"
+            sudo virt-cat -a "$SEK8S_IMG_PATH" /var/log/setup-app.log >> "$LOGFILE" 2>&1
+            if [ "$NO_CACHE" = "true" ]; then
+                # Pause for debugging
+                log "Paused for debugging before removing build VM. Press Enter to continue and shutdown the VM..."
+                read -r
+            fi
+            virsh destroy "$VM_NAME" >/dev/null 2>&1 || true
+            virsh undefine "$VM_NAME" >/dev/null 2>&1 || true
+            exit 1
+        fi
+    fi
+    log "Waiting for setup-app.sh ($i/120)..."
+    sleep 30
+done
+if ! sudo virt-cat -a "$SEK8S_IMG_PATH" /root/setup-app-done > /tmp/setup-app-status 2>/dev/null || ! grep -q "SUCCESS" /tmp/setup-app-status; then
+    log "Error: setup-app.sh not run or not completed"
+    sudo virt-cat -a "$SEK8S_IMG_PATH" /var/log/setup-app.log >> "$LOGFILE" 2>&1 || true
+    virsh destroy "$VM_NAME" >/dev/null 2>&1 || true
+    virsh undefine "$VM_NAME" >/dev/null 2>&1 || true
+    exit 1
+fi
+rm -f /tmp/setup-app-status
+
+log "Press Enter to continue and shut down the VM..."
+read -r
+
+# Shut down VM
+log "Shutting down VM..."
+virsh shutdown "$VM_NAME" >> "$LOGFILE" 2>&1
+for i in {1..60}; do
+    if ! virsh list --state-running | grep -q "$VM_NAME"; then
+        log "VM shut down successfully"
+        break
+    fi
+    log "Waiting for VM shutdown ($i/60)..."
+    sleep 2
+done
+if virsh list --state-running | grep -q "$VM_NAME"; then
+    log "Error: Failed to shut down VM"
+    virsh destroy "$VM_NAME" >/dev/null 2>&1 || true
+    exit 1
+fi
+virsh undefine "$VM_NAME" >> "$LOGFILE" 2>&1
+
+# Clean up cloud-init ISO
+rm -rf "$CLOUD_INIT_DIR"
+
+# Copy to final image
+log "Copying $SEK8S_IMG_PATH to $FINAL_IMG_PATH..."
+sudo cp "$SEK8S_IMG_PATH" "$FINAL_IMG_PATH"
+if [ $? -eq 0 ]; then
+    log "Final image created at $FINAL_IMG_PATH"
+else
+    log "Error: Failed to copy image"
+    exit 1
+fi
+
+# Verify final image
+log "Verifying final image..."
+qemu-img check "$FINAL_IMG_PATH" >> "$LOGFILE" 2>&1
+if [ $? -eq 0 ]; then
+    log "Final image verification passed"
+else
+    log "Error: Final image verification failed"
+    exit 1
+fi
+
 # Output result
-echo "TDX guest image created: $GUEST_IMG_PATH" | tee -a "$LOGFILE"
-echo "Run '$REPO_ROOT/scripts/test-vm.sh' to test the image locally." | tee -a "$LOGFILE"
+log "TDX guest image created: $FINAL_IMG_PATH"
+log "Run '$REPO_ROOT/scripts/test-image.sh' to test the image locally."

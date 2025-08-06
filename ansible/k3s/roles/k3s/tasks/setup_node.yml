@@ -104,7 +104,14 @@
         cmd: k3s kubectl get nodes
       changed_when: false
 
+    - name: Make kube config directory
+      ansible.builtin.file:
+        path: ~/.kube
+        mode: "0755"
+        state: directory
+
     - name: Copy k3s kubeconfig
       ansible.builtin.copy:
         src: /etc/rancher/k3s/k3s.yaml
         dest: ~/.kube/config
+        mode: "0600"
