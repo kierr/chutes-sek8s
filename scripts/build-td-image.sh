@@ -173,7 +173,7 @@ for i in {1..120}; do
         elif grep -q "ERROR" /tmp/setup-app-status; then
             log "Error: setup-app.sh failed"
             sudo virt-cat -a "$SEK8S_IMG_PATH" /var/log/setup-app.log >> "$LOGFILE" 2>&1
-            if [ "$NO_CACHE" = "true" ]; then
+            if [ "$DEBUG" = "true" ]; then
                 # Pause for debugging
                 log "Paused for debugging before removing build VM. Press Enter to continue and shutdown the VM..."
                 read -r
@@ -216,7 +216,7 @@ if virsh list --state-running | grep -q "$VM_NAME"; then
 fi
 virsh undefine "$VM_NAME" >> "$LOGFILE" 2>&1
 
-# Clean up cloud-init ISO
+# Clean up cloud-init
 rm -rf "$CLOUD_INIT_DIR"
 
 # Copy to final image

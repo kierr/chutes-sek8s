@@ -5,17 +5,13 @@
     repo_url: https://helm.ngc.nvidia.com/nvidia
 
 - name: Install GPU Operator
-  kubernetes.core.helm:
-    name: gpu-operator
-    chart_ref: nvidia/gpu-operator
-    release_namespace: gpu-operator
-    create_namespace: true
-    state: present
-    force: true
-    values:
-      driver:
-        enabled: false
-      toolkit:
-        enabled: false
-      operator:
-        upgradeCRD: false
+  ansible.builtin.command: >
+    helm install gpu-operator nvidia/gpu-operator
+    --namespace gpu-operator
+    --set driver.enabled=false
+    --set toolkit.enabled=false
+    --set operator.upgradeCRD=false
+    --create-namespace
+    --kubeconfig=/etc/rancher/k3s/k3s.yaml
+  register: helm_result
+  changed_when: helm_result.rc == 0
