@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UBUNTU_VERSION="25.04"
-IMAGE_PATH="$TDX_REPO/image/tdx-guest-ubuntu-$UBUNTU_VERSION-final.qcow2"
+IMAGE_PATH="$REPO_ROOT/image/tdx-guest-ubuntu-$UBUNTU_VERSION-final.qcow2"
 VM_NAME="tdx-test-vm"
 LOGFILE="tdx-test-vm.log"
 VNC_PORT="5900"
@@ -60,7 +60,7 @@ sudo virsh net-autostart default >> $LOGFILE 2>&1 || true
 
 # Check for guest image
 if [ ! -f "$IMAGE_PATH" ]; then
-    log "Error: Guest image $IMAGE_PATH not found. Run './scripts/build-td-image.sh' with UBUNTU_VERSION=$UBUNTU_VERSION."
+    log "Error: Guest image $IMAGE_PATH not found. Run './scripts/build-server-image.sh' with UBUNTU_VERSION=$UBUNTU_VERSION."
     exit 1
 fi
 

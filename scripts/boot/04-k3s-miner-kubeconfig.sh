@@ -110,7 +110,7 @@ contexts:
     user: $NODE_NAME
     namespace: $NAMESPACE
   name: $NODE_NAME
-current-context: $CERT_NAME
+current-context: $NODE_NAME
 users:
 - name: $NODE_NAME
   user:

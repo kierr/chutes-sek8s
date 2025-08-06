@@ -24,6 +24,7 @@ CONFIG_FILE="/etc/rancher/k3s/config.yaml"
 if [ ! -f "$CONFIG_FILE" ]; then
     mkdir -p /etc/rancher/k3s
     cat > "$CONFIG_FILE" << EOF
+
 node-name: $NODE_NAME
 node-ip: $NODE_IP
 node-external-ip: $NODE_IP
