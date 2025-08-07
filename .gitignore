@@ -2,7 +2,7 @@
 .venv
 **/__pycache__/*
 
-local/*
-image/*
+**/local/*
+**/image/*
 **/*.log
 .idea

@@ -3,23 +3,22 @@ set -e
 
 # Resolve the absolute path of the script's directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Configuration
 TDX_REPO="$REPO_ROOT/tdx"
 UBUNTU_VERSION="25.04"
-BOOT_SCRIPT="${BOOT_SCRIPT:-$REPO_ROOT/scripts/setup-server.sh}"
+BOOT_SCRIPT="${BOOT_SCRIPT:-$REPO_ROOT/guest-tools/scripts/setup-server.sh}"
 ANSIBLE_DIR="${ANSIBLE_DIR:-$REPO_ROOT/ansible}"
 CHARTS_DIR="${CHARTS_DIR:-$REPO_ROOT/charts}"
-BOOT_SCRIPTS_DIR="${BOOT_SCRIPTS_DIR:-$REPO_ROOT/scripts/boot}"
+BOOT_SCRIPTS_DIR="${BOOT_SCRIPTS_DIR:-$REPO_ROOT/guest-tools/scripts/boot}"
 LOGFILE="$REPO_ROOT/tdx-image-build.log"
 GUEST_IMG_PATH="$TDX_REPO/guest-tools/image/tdx-guest-ubuntu-$UBUNTU_VERSION-generic.qcow2"
-IMG_DIR="$REPO_ROOT/image"
+IMG_DIR="$REPO_ROOT/guest-tools/image"
 SEK8S_IMG_PATH="$IMG_DIR/tdx-guest-ubuntu-$UBUNTU_VERSION.qcow2"
 FINAL_IMG_PATH="$IMG_DIR/tdx-guest-ubuntu-$UBUNTU_VERSION-final.qcow2"
 VM_NAME="tdx-build"
 VNC_PORT="5901"
-USER_DATA_FILE="local/user-data.yaml"
 CLOUD_INIT_DIR="$REPO_ROOT/local/cloud-init"
 USER_DATA_FILE="$CLOUD_INIT_DIR/user-data"
 NO_CACHE="${NO_CACHE:-false}"
@@ -197,8 +196,11 @@ if ! sudo virt-cat -a "$SEK8S_IMG_PATH" /root/setup-server-done > /tmp/setup-ser
 fi
 rm -f /tmp/setup-server-status
 
-log "Press Enter to continue and shut down the VM..."
-read -r
+# Allow pause to debug locally if desired
+if [ "$DEBUG" = "true" ]; then
+    log "Press Enter to continue and shut down the VM..."
+    read -r
+fi
 
 # Shut down VM
 log "Shutting down VM..."
@@ -220,6 +222,24 @@ virsh undefine "$VM_NAME" >> "$LOGFILE" 2>&1
 
 # Clean up cloud-init
 rm -rf "$CLOUD_INIT_DIR"
+
+# Clean cloud-init state from the offline image
+log "Cleaning cloud-init state for fresh deployments..."
+sudo virt-customize -a "$SEK8S_IMG_PATH" \
+    --delete /var/lib/cloud/instances \
+    --delete /var/lib/cloud/data \
+    --delete /var/lib/cloud/instance \
+    --delete /var/log/cloud-init.log \
+    --delete /var/log/cloud-init-output.log \
+    --run-command 'find /var/lib/cloud -name "*.pkl" -delete 2>/dev/null || true' \
+    --run-command 'mkdir -p /var/lib/cloud/instances /var/lib/cloud/data'
+
+if [ $? -eq 0 ]; then
+    log "Successfully cleaned cloud-init state"
+else
+    log "Error: Failed to clean cloud-init state"
+    exit 1
+fi
 
 # Copy to final image
 log "Copying $SEK8S_IMG_PATH to $FINAL_IMG_PATH..."
@@ -243,4 +263,4 @@ fi
 
 # Output result
 log "TDX guest image created: $FINAL_IMG_PATH"
-log "Run '$REPO_ROOT/scripts/test-image.sh' to test the image locally."
+log "Run '$REPO_ROOT/guest-tools/scripts/test-image.sh' to test the image locally."
