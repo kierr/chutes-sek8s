@@ -9,33 +9,6 @@
         group: root
         mode: "0755"
 
-    - name: Install AppArmor
-      ansible.builtin.apt:
-        name:
-          - apparmor
-          - apparmor-utils
-          - apparmor-profiles
-        state: present
-        update_cache: true
-
-    - name: Copy AppArmor profiles
-      ansible.builtin.copy:
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-        owner: root
-        group: root
-        mode: "0644"
-      loop:
-        - { src: "files/apparmor-k3s", dest: "/etc/apparmor.d/k3s-restrictions" }
-        - { src: "files/apparmor-containerd", dest: "/etc/apparmor.d/containerd-restrictions" }
-      register: apparmor_profiles
-
-    - name: Load AppArmor profiles
-      ansible.builtin.command: apparmor_parser -r {{ item.dest }}
-      loop: "{{ apparmor_profiles.results }}"
-      when: item.changed
-      changed_when: true
-
     - name: Create systemd drop-in directory for k3s
       ansible.builtin.file:
         path: /etc/systemd/system/k3s.service.d
@@ -55,23 +28,8 @@
         - reload systemd
         - restart k3s
 
-    - name: Configure containerd for mount restrictions
-      ansible.builtin.blockinfile:
-        path: /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
-        block: |
-          # Volume mount restrictions
-          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-            # Restrict volume mounts
-            MountLabel = "containerd-restrictions"
-            
-          [plugins."io.containerd.grpc.v1.cri".registry]
-            # Ensure only /cache is used for registry mirrors
-            config_path = "/cache/containerd/certs.d"
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - MOUNT RESTRICTIONS"
-        create: true
-      notify: restart k3s
-
     - name: Set sysctl parameters for mount security
+      when: false
       ansible.posix.sysctl:
         name: "{{ item.name }}"
         value: "{{ item.value }}"
@@ -83,6 +41,16 @@
         - { name: "fs.protected_fifos", value: "2" }
         - { name: "fs.protected_symlinks", value: "1" }
         - { name: "fs.protected_hardlinks", value: "1" }
+
+- name: Ensure OPA policies directory exists
+  ansible.builtin.file:
+    path: /etc/opa/policies
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+    recurse: yes
+  tags: opa-policy
 
 - name: Create OPA volume policy
   ansible.builtin.copy:
