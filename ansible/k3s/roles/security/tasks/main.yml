@@ -6,13 +6,6 @@
       ansible.builtin.include_tasks: mount-restrictions.yml
       tags: mount-restrictions
 
-    - name: Create OPA directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - /etc/opa
-        - /etc/opa/policies
-        - /var/log/opa
+    - name: Include OPA policy setup
+      ansible.builtin.include_tasks: opa-setup.yml
       tags: opa-setup
