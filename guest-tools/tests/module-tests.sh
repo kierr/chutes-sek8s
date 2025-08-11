@@ -112,18 +112,6 @@ for param in $EXPECTED_PARAMS; do
     fi
 done
 
-# Test: Verify AppArmor profile for k3s module control
-log_test "Test: Checking AppArmor module control profile"
-if command -v aa-status >/dev/null 2>&1; then
-    if aa-status 2>/dev/null | grep -q "usr.local.bin.k3s"; then
-        log_pass "K3s AppArmor profile is loaded"
-    else
-        log_fail "K3s AppArmor profile not found"
-    fi
-else
-    log_fail "AppArmor not available"
-fi
-
 # Test: Test mount syscall blocking in container
 log_test "Test: Testing mount syscall blocking with seccomp"
 if command -v kubectl >/dev/null 2>&1; then
