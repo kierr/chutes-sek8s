@@ -308,9 +308,9 @@ log_test "Test: Checking attestation integration"
 ATTESTATION_DIR="/var/lib/attestation"
 if [ -d "$ATTESTATION_DIR" ]; then
     # Check for integrity reports
-    INTEGRITY_REPORTS=$(ls -1 "$ATTESTATION_DIR"/integrity-check-*.json 2>/dev/null | wc -l)
+    INTEGRITY_REPORTS=$(ls -1 "$ATTESTATION_DIR"/binary-check-*.json 2>/dev/null | wc -l)
     if [ "$INTEGRITY_REPORTS" -gt 0 ]; then
-        log_pass "Found $INTEGRITY_REPORTS integrity attestation reports"
+        log_pass "Found $INTEGRITY_REPORTS binary attestation reports"
     else
         log_skip "Attestation directory exists but no integrity reports yet"
     fi

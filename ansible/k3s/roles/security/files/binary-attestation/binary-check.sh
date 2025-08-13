@@ -7,7 +7,7 @@ BASELINE_FILE="$INTEGRITY_DIR/binary-checksums.sha256"
 REPORT_DIR="/var/lib/attestation"
 LOG_FILE="/var/log/integrity-check.log"
 ALERT_FILE="/var/log/integrity-alerts.log"
-STATE_FILE="/var/lib/attestation/integrity-state-current.json"
+STATE_FILE="/var/lib/attestation/binary-state-current.json"
 MAX_REPORTS=20
 
 # Critical binaries to monitor
