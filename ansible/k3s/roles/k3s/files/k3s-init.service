@@ -8,12 +8,13 @@ Before=cloud-final.service
 ConditionPathExists=!/var/lib/rancher/k3s/.initialized
 
 [Service]
-Type=oneshot
+Type=notify
+NotifyAccess=all
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/k3s-init.sh
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=60
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target

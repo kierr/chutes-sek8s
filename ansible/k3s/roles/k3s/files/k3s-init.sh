@@ -1,13 +1,23 @@
 #!/bin/bash
 # /usr/local/bin/k3s-init.sh
-# k3s-init: Start k3s, drain any old nodes, reconfigure, restart
+# k3s-init: Start k3s DIRECTLY as a process, drain old nodes, then stop it
 set -e
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a /var/log/k3s-init.log
 }
 
+# Function to notify systemd we're still alive
+notify_systemd() {
+    if [ -n "$NOTIFY_SOCKET" ]; then
+        systemd-notify --status="$1" || true
+    fi
+}
+
 log "Starting k3s initialization..."
+
+# Tell systemd we're starting
+notify_systemd "Starting k3s initialization"
 
 # Get current hostname and IP
 HOSTNAME=$(hostname)
@@ -17,82 +27,9 @@ if [ -z "$NODE_IP" ]; then
 fi
 log "Target hostname: $HOSTNAME, IP: $NODE_IP"
 
-# STEP 1: Start k3s with minimal configuration to check for old nodes
-log "Step 1: Starting k3s with temporary configuration..."
+# Create k3s configuration
+log "Creating k3s configuration..."
 mkdir -p /etc/rancher/k3s
-
-# Start with minimal config that doesn't specify node name (will use hostname)
-cat > /etc/rancher/k3s/config.yaml << EOF
-write-kubeconfig-mode: "0644"
-disable:
-  - traefik
-  - servicelb
-cluster-cidr: 10.42.0.0/16
-service-cidr: 10.43.0.0/16
-EOF
-
-# Start k3s
-systemctl start k3s
-
-# Wait for k3s to be ready
-log "Waiting for k3s to start..."
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-for i in {1..60}; do
-    if kubectl get nodes >/dev/null 2>&1; then
-        log "k3s is ready"
-        break
-    fi
-    sleep 2
-done
-
-# STEP 2: Find any nodes that don't match current hostname
-log "Step 2: Checking for old nodes..."
-OLD_NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -v "^${HOSTNAME}$" || true)
-
-if [ -z "$OLD_NODES" ]; then
-    log "No old nodes found, checking if current node exists..."
-    
-    # Check if current hostname node already exists
-    if kubectl get node "$HOSTNAME" >/dev/null 2>&1; then
-        log "Current node $HOSTNAME already exists, just updating configuration"
-        # Just update the config and restart
-        systemctl stop k3s
-        sleep 5
-    else
-        log "No nodes found or only current node exists"
-    fi
-else
-    # Process each old node
-    log "Found old node(s) to clean up: $OLD_NODES"
-    
-    for OLD_NODE in $OLD_NODES; do
-        log "Draining old node: $OLD_NODE..."
-        
-        # Cordon first to prevent new pods
-        kubectl cordon "$OLD_NODE" || true
-        
-        # Drain the node - this will evict all pods
-        kubectl drain "$OLD_NODE" \
-            --ignore-daemonsets \
-            --delete-emptydir-data \
-            --force \
-            --grace-period=30 \
-            --timeout=60s || true
-        
-        # Taint the node to ensure nothing schedules to it
-        kubectl taint nodes "$OLD_NODE" node.kubernetes.io/unscheduled=true:NoSchedule --overwrite || true
-        
-        log "Node $OLD_NODE drained and tainted"
-    done
-    
-    # Stop k3s for reconfiguration
-    log "Stopping k3s for reconfiguration..."
-    systemctl stop k3s
-    sleep 5
-fi
-
-# STEP 3: Create new configuration with correct hostname and IP
-log "Step 3: Creating new k3s configuration..."
 cat > /etc/rancher/k3s/config.yaml << EOF
 node-name: $HOSTNAME
 node-ip: $NODE_IP
@@ -112,36 +49,158 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 EOF
 
-# STEP 4: Start k3s with new configuration
-log "Step 4: Starting k3s with new configuration..."
-systemctl start k3s
+# Start k3s directly as a background process
+log "Starting k3s process directly..."
+/usr/local/bin/k3s server > /var/log/k3s-init-process.log 2>&1 &
+K3S_PID=$!
+log "Started k3s with PID: $K3S_PID"
 
-# Wait for new node to be ready
-log "Waiting for node $HOSTNAME to be ready..."
+# Function to check if k3s is still running
+check_k3s_alive() {
+    if ! kill -0 $K3S_PID 2>/dev/null; then
+        log "ERROR: k3s process died unexpectedly (PID $K3S_PID)"
+        log "Last 50 lines of k3s log:"
+        tail -50 /var/log/k3s-init-process.log | while read line; do
+            log "  k3s: $line"
+        done
+        return 1
+    fi
+    return 0
+}
+
+# Wait for k3s to be ready
+log "Waiting for k3s API to be ready..."
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+API_READY=false
 for i in {1..60}; do
-    if kubectl get node "$HOSTNAME" >/dev/null 2>&1; then
-        NODE_STATUS=$(kubectl get node "$HOSTNAME" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
-        if [ "$NODE_STATUS" = "True" ]; then
-            log "Node $HOSTNAME is ready"
+    if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+        if kubectl get nodes >/dev/null 2>&1; then
+            log "k3s API is ready"
+            API_READY=true
             break
         fi
     fi
+    
+    # Check if process is still alive
+    if ! check_k3s_alive; then
+        exit 1
+    fi
+    
+    # Send watchdog keepalive
+    systemd-notify WATCHDOG=1 || true
+    
+    if [ $((i % 10)) -eq 0 ]; then
+        log "Still waiting for k3s API... ($i/60)"
+    fi
+    
     sleep 2
 done
 
-# STEP 5: Delete any old nodes
-if [ -n "$OLD_NODES" ]; then
-    log "Step 5: Removing old node(s)..."
-    for OLD_NODE in $OLD_NODES; do
-        if kubectl get node "$OLD_NODE" >/dev/null 2>&1; then
-            kubectl delete node "$OLD_NODE" || log "Failed to delete node $OLD_NODE"
-            log "Removed old node: $OLD_NODE"
-        fi
-    done
+if [ "$API_READY" != "true" ]; then
+    log "ERROR: k3s API not ready after 60 attempts"
+    check_k3s_alive
+    exit 1
 fi
+
+# Give k3s some time since it may resart for certificates etc.
+sleep 15 
+
+# Wait for current node to be ready
+log "Waiting for node $HOSTNAME to be ready..."
+NODE_READY=false
+for i in {1..60}; do
+    # Check process first
+    if ! check_k3s_alive; then
+        exit 1
+    fi
+    
+    # Try to get node status
+    if NODE_OUTPUT=$(kubectl get node "$HOSTNAME" -o json 2>&1); then
+        NODE_STATUS=$(echo "$NODE_OUTPUT" | jq -r '.status.conditions[] | select(.type=="Ready") | .status' 2>/dev/null || echo "Unknown")
+        if [ "$NODE_STATUS" = "True" ]; then
+            log "Node $HOSTNAME is ready"
+            NODE_READY=true
+            break
+        else
+            log "Node status: $NODE_STATUS"
+        fi
+    else
+        log "Failed to get node: $NODE_OUTPUT"
+    fi
+    
+    # Send watchdog keepalive
+    systemd-notify WATCHDOG=1 || true
+    
+    if [ $((i % 10)) -eq 0 ]; then
+        log "Still waiting for node to be ready... ($i/60)"
+    fi
+    
+    sleep 2
+done
+
+if [ "$NODE_READY" != "true" ]; then
+    log "WARNING: Node $HOSTNAME not ready after 60 attempts, continuing anyway"
+fi
+
+# Check k3s is still alive
+if ! check_k3s_alive; then
+    exit 1
+fi
+
+# Find any nodes that don't match current hostname
+log "Checking for old nodes..."
+OLD_NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -v "^${HOSTNAME}$" || true)
+
+if [ -n "$OLD_NODES" ]; then
+    log "Found old node(s) to clean up: $OLD_NODES"
+    
+    for OLD_NODE in $OLD_NODES; do
+        log "Draining old node: $OLD_NODE..."
+        
+        # Cordon first to prevent new pods
+        kubectl cordon "$OLD_NODE" || true
+        
+        # Send watchdog keepalive
+        systemd-notify WATCHDOG=1 || true
+        
+        # Drain the node - this will evict all pods
+        kubectl drain "$OLD_NODE" \
+            --ignore-daemonsets \
+            --delete-emptydir-data \
+            --force \
+            --grace-period=30 \
+            --timeout=60s || true
+        
+        # Delete the node
+        kubectl delete node "$OLD_NODE" || log "Failed to delete node $OLD_NODE"
+        log "Removed old node: $OLD_NODE"
+        
+        # Send watchdog keepalive
+        systemd-notify WATCHDOG=1 || true
+    done
+else
+    log "No old nodes found"
+fi
+
+# Stop the k3s process
+log "Stopping k3s process..."
+if kill -0 $K3S_PID 2>/dev/null; then
+    kill $K3S_PID
+    wait $K3S_PID 2>/dev/null || true
+    log "k3s process stopped"
+else
+    log "k3s process already stopped"
+fi
+
+# Wait a moment for clean shutdown
+sleep 5
+
+# Clean up temp log
+rm /var/log/k3s-init-process.log
 
 # Create marker file
 mkdir -p /var/lib/rancher/k3s
 touch /var/lib/rancher/k3s/.initialized
 
-log "k3s initialization complete"
+notify_systemd "Initialization complete"
+log "k3s initialization complete - ready for k3s.service to start"
