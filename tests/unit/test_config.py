@@ -1,248 +1,346 @@
+# tests/unit/test_config.py
+"""
+Unit tests for Pydantic configuration
+"""
+
 import os
+import json
 import pytest
-from sek8s.config import Config, AdmissionSettings, OPAEngineSettings
+from pathlib import Path
+from unittest.mock import patch, mock_open
+
+from sek8s.config import (
+    AdmissionConfig, 
+    NamespacePolicy, 
+    OPAConfig, 
+    CosignConfig,
+    load_config
+)
 
 
-# Helper function to clear environment variables
-def clear_test_env_vars():
-    """Clear all test-related environment variables."""
-    test_vars = [
-        'TLS_CERT_FILE', 'TLS_PRIVATE_KEY_FILE', 'ALLOWED_REGISTRIES', 'CONTROLLER_PORT',
-        'OPA_PORT', 'POLICY_DIR', 'DEBUG'
-    ]
-    for var in test_vars:
-        os.environ.pop(var, None)
-
-
-# Base Config class tests
-def test_config_base_class_cannot_be_instantiated_without_properties():
-    """Test that base Config class works when subclassed."""
-    class TestConfig(Config):
-        test_field: str
+class TestAdmissionConfig:
+    """Test AdmissionConfig with Pydantic v2 JSON format."""
     
-    clear_test_env_vars()
-    with pytest.raises(RuntimeError, match="Required environment variable 'TEST_FIELD' is not set"):
-        TestConfig()
-
-
-def test_config_unsupported_type_raises_error():
-    """Test that unsupported types raise RuntimeError."""
-    class TestConfig(Config):
-        unsupported_field: dict  # Unsupported type
+    def setup_method(self):
+        """Clear environment before each test."""
+        env_vars = [
+            "ADMISSION_BIND_ADDRESS", "ADMISSION_PORT", "TLS_CERT_PATH",
+            "TLS_KEY_PATH", "OPA_URL", "ALLOWED_REGISTRIES", "NAMESPACE_POLICIES",
+            "DEBUG", "ENFORCEMENT_MODE", "CACHE_TTL"
+        ]
+        for var in env_vars:
+            os.environ.pop(var, None)
     
-    clear_test_env_vars()
-    os.environ['UNSUPPORTED_FIELD'] = 'some_value'
+    def test_default_config(self):
+        """Test default configuration values."""
+        config = AdmissionConfig()
+        
+        assert config.bind_address == "127.0.0.1"
+        assert config.port == 8443
+        assert config.allowed_registries == ["docker.io", "gcr.io", "quay.io", "localhost:30500"]
+        assert config.enforcement_mode == "enforce"
+        assert config.debug is False
     
-    with pytest.raises(RuntimeError, match="Unsupported type for configuration value"):
-        TestConfig()
-
-
-# AdmissionSettings tests
-def test_admission_settings_with_all_env_vars():
-    """Test AdmissionSettings when all environment variables are set."""
-    clear_test_env_vars()
-    os.environ.update({
-        'TLS_CERT_FILE': '/path/to/cert.pem',
-        'TLS_PRIVATE_KEY_FILE': '/path/to/key.pem',
-        'CONTROLLER_PORT': '9999'
-    })
+    def test_allowed_registries_json_parsing(self):
+        """Test parsing of JSON array for allowed_registries."""
+        # Set as JSON array (Pydantic v2 default behavior)
+        os.environ["ALLOWED_REGISTRIES"] = '["docker.io", "gcr.io", "quay.io"]'
+        
+        config = AdmissionConfig()
+        
+        assert config.allowed_registries == ["docker.io", "gcr.io", "quay.io"]
     
-    config = AdmissionSettings()
+    def test_allowed_registries_with_wildcards(self):
+        """Test registry list with wildcards."""
+        os.environ["ALLOWED_REGISTRIES"] = '["docker.io", "*.amazonaws.com", "*.azurecr.io"]'
+        
+        config = AdmissionConfig()
+        
+        assert config.allowed_registries == ["docker.io", "*.amazonaws.com", "*.azurecr.io"]
     
-    assert config.tls_cert_file == '/path/to/cert.pem'
-    assert config.tls_private_key_file == '/path/to/key.pem'
-    assert config.controller_port == 9999
-
-
-def test_admission_settings_with_optional_fields_none():
-    """Test AdmissionSettings when optional fields are not set."""
-    clear_test_env_vars()
+    def test_namespace_policies_json_parsing(self):
+        """Test parsing of JSON object for namespace_policies."""
+        policies = {
+            "kube-system": {"mode": "warn", "exempt": False},
+            "production": {"mode": "enforce", "exempt": False},
+            "development": {"mode": "monitor", "exempt": True}
+        }
+        
+        os.environ["NAMESPACE_POLICIES"] = json.dumps(policies)
+        
+        config = AdmissionConfig()
+        
+        assert "kube-system" in config.namespace_policies
+        assert config.namespace_policies["kube-system"].mode == "warn"
+        assert config.namespace_policies["kube-system"].exempt is False
+        
+        assert "production" in config.namespace_policies
+        assert config.namespace_policies["production"].mode == "enforce"
+        
+        assert "development" in config.namespace_policies
+        assert config.namespace_policies["development"].exempt is True
     
-    config = AdmissionSettings()
+    def test_boolean_parsing(self):
+        """Test boolean environment variable parsing."""
+        # Test various boolean representations
+        for true_val in ["true", "True", "TRUE", "1"]:
+            os.environ["DEBUG"] = true_val
+            config = AdmissionConfig()
+            assert config.debug is True
+        
+        for false_val in ["false", "False", "FALSE", "0"]:
+            os.environ["DEBUG"] = false_val
+            config = AdmissionConfig()
+            assert config.debug is False
     
-    assert config.tls_cert_file is None
-    assert config.tls_private_key_file is None
-    assert config.controller_port == 8884  # Default value
-
-
-def test_admission_settings_with_default_port():
-    """Test AdmissionSettings uses default port when not specified."""
-    clear_test_env_vars()
-    os.environ['ALLOWED_REGISTRIES'] = 'docker.io'
+    def test_port_validation(self):
+        """Test port range validation."""
+        # Valid port
+        os.environ["ADMISSION_PORT"] = "9000"
+        config = AdmissionConfig()
+        assert config.port == 9000
+        
+        # Invalid port (too high)
+        os.environ["ADMISSION_PORT"] = "70000"
+        with pytest.raises(ValueError):
+            AdmissionConfig()
+        
+        # Invalid port (too low)
+        os.environ["ADMISSION_PORT"] = "0"
+        with pytest.raises(ValueError):
+            AdmissionConfig()
     
-    config = AdmissionSettings()
+    def test_enforcement_mode_validation(self):
+        """Test enforcement mode enum validation."""
+        # Valid modes
+        for mode in ["enforce", "warn", "monitor"]:
+            os.environ["ENFORCEMENT_MODE"] = mode
+            config = AdmissionConfig()
+            assert config.enforcement_mode == mode
+        
+        # Invalid mode
+        os.environ["ENFORCEMENT_MODE"] = "invalid"
+        with pytest.raises(ValueError):
+            AdmissionConfig()
     
-    assert config.controller_port == 8884
-
-
-def test_opa_settings_missing_required_field():
-    """Test AdmissionSettings raises error when required field is missing."""
-    clear_test_env_vars()
-    os.environ['POLICY_DIR'] = '/tmp/policies'
-    # Don't set ALLOWED_REGISTRIES
+    def test_config_file_loading(self):
+        """Test loading from JSON config file."""
+        import tempfile
+        
+        config_data = {
+            "bind_address": "0.0.0.0",
+            "port": 8080,
+            "allowed_registries": ["custom.registry.com"],
+            "enforcement_mode": "warn",
+            "namespace_policies": {
+                "custom-ns": {"mode": "monitor", "exempt": True}
+            }
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config_data, f)
+            config_file = f.name
+        
+        try:
+            # Load with config file
+            config = AdmissionConfig(config_file=config_file)
+            
+            assert config.bind_address == "0.0.0.0"
+            assert config.port == 8080
+            assert config.allowed_registries == ["custom.registry.com"]
+            assert config.enforcement_mode == "warn"
+            assert "custom-ns" in config.namespace_policies
+        finally:
+            os.unlink(config_file)
     
-    with pytest.raises(RuntimeError, match="Required environment variable 'ALLOWED_REGISTRIES' is not set"):
-        OPAEngineSettings()
-
-
-def test_admission_settings_invalid_port():
-    """Test AdmissionSettings raises error for invalid port value."""
-    clear_test_env_vars()
-    os.environ.update({
-        'ALLOWED_REGISTRIES': 'docker.io',
-        'CONTROLLER_PORT': 'invalid_port'
-    })
+    def test_env_overrides_config_file(self):
+        """Test that environment variables override config file."""
+        import tempfile
+        
+        config_data = {
+            "port": 8080,
+            "debug": False
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config_data, f)
+            config_file = f.name
+        
+        try:
+            # Set environment variable that should override file
+            os.environ["ADMISSION_PORT"] = "9443"
+            os.environ["DEBUG"] = "true"
+            
+            config = AdmissionConfig(config_file=config_file)
+            
+            # Environment should win
+            assert config.port == 9443
+            assert config.debug is True
+        finally:
+            os.unlink(config_file)
     
-    with pytest.raises(RuntimeError, match="Invalid integer value for 'CONTROLLER_PORT'"):
-        AdmissionSettings()
-
-
-def test_opa_settings_empty_registries():
-    """Test AdmissionSettings handles empty registries list."""
-    clear_test_env_vars()
-    os.environ.update({
-        'ALLOWED_REGISTRIES': '   ,  ,   ',  # Only whitespace and commas
-        'POLICY_DIR': '/tmp/policies'
-    })
+    def test_export_methods(self):
+        """Test configuration export methods."""
+        os.environ["ALLOWED_REGISTRIES"] = '["test.registry.com"]'
+        os.environ["DEBUG"] = "true"
+        
+        config = AdmissionConfig()
+        
+        # Test JSON export
+        json_str = config.export_json()
+        parsed = json.loads(json_str)
+        assert parsed["allowed_registries"] == ["test.registry.com"]
+        assert parsed["debug"] is True
+        
+        # Test dict export
+        dict_export = config.export_dict()
+        assert dict_export["allowed_registries"] == ["test.registry.com"]
+        assert dict_export["debug"] is True
     
-    config = OPAEngineSettings()
+    def test_get_namespace_policy(self):
+        """Test getting namespace-specific policies."""
+        policies = {
+            "production": {"mode": "enforce", "exempt": False},
+            "development": {"mode": "monitor", "exempt": True}
+        }
+        
+        os.environ["NAMESPACE_POLICIES"] = json.dumps(policies)
+        config = AdmissionConfig()
+        
+        # Get existing namespace
+        prod_policy = config.get_namespace_policy("production")
+        assert prod_policy.mode == "enforce"
+        assert prod_policy.exempt is False
+        
+        # Get non-existent namespace (should return default)
+        unknown_policy = config.get_namespace_policy("unknown")
+        assert unknown_policy.mode == "enforce"  # default mode
+        assert unknown_policy.exempt is False
+        
+        # Test is_namespace_exempt
+        assert config.is_namespace_exempt("development") is True
+        assert config.is_namespace_exempt("production") is False
+        
+class TestNamespacePolicy:
+    """Tests for NamespacePolicy."""
     
-    assert config.allowed_registries == []
+    def test_default_namespace_policy(self):
+        """Test default namespace policy values."""
+        policy = NamespacePolicy()
+        
+        assert policy.mode == "enforce"
+        assert policy.exempt is False
+    
+    def test_custom_namespace_policy(self):
+        """Test custom namespace policy."""
+        policy = NamespacePolicy(mode="warn", exempt=True)
+        
+        assert policy.mode == "warn"
+        assert policy.exempt is True
+    
+    def test_invalid_mode(self):
+        """Test invalid enforcement mode."""
+        with pytest.raises(ValueError):
+            NamespacePolicy(mode="invalid")
 
 
-def test_opa_settings_registries_with_whitespace():
-    """Test AdmissionSettings properly trims whitespace from registries."""
-    clear_test_env_vars()
-    os.environ.update({
-        'ALLOWED_REGISTRIES': ' docker.io , quay.io  ,  gcr.io ',
-        'POLICY_DIR': '/tmp/policies'
-    })
+class TestOPAConfig:
+    """Tests for OPAConfig."""
     
-    config = OPAEngineSettings()
+    def test_default_opa_config(self):
+        """Test default OPA configuration."""
+        config = OPAConfig()
+        
+        assert config.opa_binary_path == Path("/usr/local/bin/opa")
+        assert config.opa_log_level == "info"
+        assert config.opa_decision_logs is False
+        assert config.opa_diagnostic_addr == "0.0.0.0:8282"
     
-    assert config.allowed_registries == ['docker.io', 'quay.io', 'gcr.io']
+    def test_opa_config_env_override(self):
+        """Test OPA config environment overrides."""
+        os.environ["OPA_BINARY_PATH"] = "/custom/opa"
+        os.environ["OPA_LOG_LEVEL"] = "debug"
+        os.environ["OPA_DECISION_LOGS"] = "true"
+        
+        config = OPAConfig()
+        
+        assert config.opa_binary_path == Path("/custom/opa")
+        assert config.opa_log_level == "debug"
+        assert config.opa_decision_logs is True
+        
+        # Cleanup
+        del os.environ["OPA_BINARY_PATH"]
+        del os.environ["OPA_LOG_LEVEL"]
+        del os.environ["OPA_DECISION_LOGS"]
+    
+    def test_invalid_log_level(self):
+        """Test invalid OPA log level."""
+        with pytest.raises(ValueError):
+            OPAConfig(opa_log_level="invalid")
 
 
-# OPAEngineSettings tests
-def test_opa_engine_settings_with_all_env_vars():
-    """Test OPAEngineSettings when all environment variables are set."""
-    clear_test_env_vars()
-    os.environ.update({
-        'POLICY_DIR': '/etc/policies',
-        'ALLOWED_REGISTRIES': 'docker.io,quay.io,gcr.io',
-        'DEBUG': 'true'
-    })
+class TestCosignConfig:
+    """Tests for CosignConfig."""
     
-    config = OPAEngineSettings()
+    def test_default_cosign_config(self):
+        """Test default Cosign configuration."""
+        config = CosignConfig()
+        
+        assert config.cosign_enabled is False
+        assert config.cosign_public_key is None
+        assert config.cosign_keyless is False
+        assert config.cosign_fulcio_url == "https://fulcio.sigstore.dev"
+        assert config.cosign_rekor_url == "https://rekor.sigstore.dev"
+        assert config.cosign_cache_ttl == 3600
     
-    assert config.policy_dir == '/etc/policies'
-    assert config.debug is True
-    assert config.allowed_registries == ['docker.io', 'quay.io', 'gcr.io']
+    def test_cosign_config_with_key(self):
+        """Test Cosign config with public key."""
+        with patch("pathlib.Path.exists", return_value=True):
+            config = CosignConfig(
+                cosign_enabled=True,
+                cosign_public_key="/path/to/key.pub"
+            )
+            
+            assert config.cosign_enabled is True
+            assert config.cosign_public_key == Path("/path/to/key.pub")
+    
+    def test_cosign_missing_key_file(self):
+        """Test Cosign config with missing key file."""
+        with patch("pathlib.Path.exists", return_value=False):
+            with pytest.raises(ValueError, match="Cosign public key not found"):
+                CosignConfig(cosign_public_key="/nonexistent/key.pub")
+    
+    def test_cosign_keyless_mode(self):
+        """Test Cosign keyless mode configuration."""
+        config = CosignConfig(
+            cosign_enabled=True,
+            cosign_keyless=True,
+            cosign_fulcio_url="https://custom.fulcio.dev"
+        )
+        
+        assert config.cosign_enabled is True
+        assert config.cosign_keyless is True
+        assert config.cosign_fulcio_url == "https://custom.fulcio.dev"
 
 
-def test_opa_engine_settings_missing_required_field():
-    """Test OPAEngineSettings raises error when required field is missing."""
-    clear_test_env_vars()
-    # Don't set POLICY_DIR
+class TestLoadConfig:
+    """Tests for load_config helper function."""
     
-    with pytest.raises(RuntimeError, match="Required environment variable 'POLICY_DIR' is not set"):
-        OPAEngineSettings()
-
-def test_opa_engine_settings_boolean_values():
-    """Test OPAEngineSettings handles various boolean values correctly."""
-    clear_test_env_vars()
-    os.environ.update({
-        'POLICY_DIR': '/etc/policies',
-        'ALLOWED_REGISTRIES': 'docker.io,quay.io,gcr.io'
-    })
+    def test_load_config_default(self):
+        """Test load_config with defaults."""
+        config = load_config()
+        
+        assert isinstance(config, AdmissionConfig)
+        assert config.bind_address == "127.0.0.1"
     
-    # Test true values
-    for true_val in ['true', 'True', 'TRUE', '1', 'yes', 'YES', 'on', 'ON']:
-        os.environ['DEBUG'] = true_val
-        config = OPAEngineSettings()
-        assert config.debug is True, f"Failed for true value: {true_val}"
-    
-    # Test false values
-    for false_val in ['false', 'False', 'FALSE', '0', 'no', 'NO', 'off', 'OFF']:
-        os.environ['DEBUG'] = false_val
-        config = OPAEngineSettings()
-        assert config.debug is False, f"Failed for false value: {false_val}"
-
-
-def test_opa_engine_settings_invalid_boolean():
-    """Test OPAEngineSettings raises error for invalid boolean value."""
-    clear_test_env_vars()
-    os.environ.update({
-        'POLICY_DIR': '/etc/policies',
-        'ALLOWED_REGISTRIES': 'docker.io,quay.io,gcr.io',
-        'DEBUG': 'maybe'
-    })
-    
-    with pytest.raises(RuntimeError, match="Invalid boolean value for 'DEBUG'"):
-        OPAEngineSettings()
-
-
-def test_opa_engine_settings_default_debug_false():
-    """Test OPAEngineSettings sets debug to None when not provided."""
-    clear_test_env_vars()
-    os.environ.update({
-        'POLICY_DIR': '/etc/policies',
-        'ALLOWED_REGISTRIES': 'docker.io,quay.io,gcr.io'
-    })
-    
-    config = OPAEngineSettings()
-    
-    assert config.debug is False
-
-
-# Integration tests
-def test_multiple_config_classes_independent():
-    """Test that multiple config classes work independently."""
-    clear_test_env_vars()
-    
-    # Set env vars for both configs
-    os.environ.update({
-        'ALLOWED_REGISTRIES': 'docker.io',
-        'CONTROLLER_PORT': '9000',
-        'POLICY_DIR': '/etc/policies',
-        'DEBUG': 'true'
-    })
-    
-    admission_config = AdmissionSettings()
-    opa_config = OPAEngineSettings()
-    
-    # Verify each config only has its own fields
-    assert admission_config.controller_port == 9000
-    assert admission_config.debug is True
-    assert admission_config.tls_cert_file is None
-    assert admission_config.tls_private_key_file is None
-    assert not hasattr(admission_config, 'policy_dir')
-    assert not hasattr(admission_config, 'allowed_registries')
-    
-    assert opa_config.policy_dir == '/etc/policies'
-    assert opa_config.allowed_registries == ['docker.io']
-    assert opa_config.debug is True
-    assert not hasattr(opa_config, 'controller_port')
-
-
-def test_config_inheritance():
-    """Test that config classes properly inherit from Config base class."""
-    clear_test_env_vars()
-    os.environ.update({
-        'ALLOWED_REGISTRIES': 'docker.io',
-        'POLICY_DIR': '/etc/policies'
-    })
-    
-    admission_config = AdmissionSettings()
-    opa_config = OPAEngineSettings()
-    
-    assert isinstance(admission_config, Config)
-    assert isinstance(opa_config, Config)
-    assert hasattr(admission_config, '_load')
-    assert hasattr(opa_config, '_load')
-
-
-# Cleanup after tests
-def test_cleanup():
-    """Cleanup environment variables after all tests."""
-    clear_test_env_vars()
+    def test_load_config_with_overrides(self):
+        """Test load_config with parameter overrides."""
+        config = load_config(
+            bind_address="0.0.0.0",
+            port=9000,
+            debug=True
+        )
+        
+        assert config.bind_address == "0.0.0.0"
+        assert config.port == 9000
+        assert config.debug is True

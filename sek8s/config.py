@@ -1,56 +1,62 @@
 """
-Configuration management for admission controller using Pydantic.
+Configuration management for admission controller using Pydantic v2.
 """
 
-from typing import List, Optional, Dict, Literal
+from typing import List, Optional, Dict, Literal, Any
 from pathlib import Path
 from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
-
-from pydantic_settings import BaseSettings
 
 
 class NamespacePolicy(BaseSettings):
     """Policy configuration for a namespace."""
     mode: Literal["enforce", "warn", "monitor"] = "enforce"
     exempt: bool = False
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False
+    )
 
 
 class AdmissionConfig(BaseSettings):
-    """Main configuration for admission controller."""
+    """Main configuration for admission controller using Pydantic v2."""
     
     # Server configuration
-    bind_address: str = Field(default="127.0.0.1", env="ADMISSION_BIND_ADDRESS")
-    port: int = Field(default=8443, env="ADMISSION_PORT", ge=1, le=65535)
+    bind_address: str = Field(default="127.0.0.1", alias="ADMISSION_BIND_ADDRESS")
+    port: int = Field(default=8443, alias="ADMISSION_PORT", ge=1, le=65535)
     
     # TLS configuration
-    tls_cert_path: Optional[Path] = Field(default=None, env="TLS_CERT_PATH")
-    tls_key_path: Optional[Path] = Field(default=None, env="TLS_KEY_PATH")
+    tls_cert_path: Optional[Path] = Field(default=None, alias="TLS_CERT_PATH")
+    tls_key_path: Optional[Path] = Field(default=None, alias="TLS_KEY_PATH")
     
     # OPA configuration
-    opa_url: str = Field(default="http://localhost:8181", env="OPA_URL")
-    opa_timeout: float = Field(default=5.0, env="OPA_TIMEOUT", gt=0)
+    opa_url: str = Field(default="http://localhost:8181", alias="OPA_URL")
+    opa_timeout: float = Field(default=5.0, alias="OPA_TIMEOUT", gt=0)
     
     # Policy configuration
-    policy_path: Path = Field(default="/etc/opa/policies", env="POLICY_PATH")
+    policy_path: Path = Field(default=Path("/etc/opa/policies"), alias="POLICY_PATH")
     
-    # Registry allowlist
+    # Registry allowlist - expects JSON array from environment
     allowed_registries: List[str] = Field(
         default=["docker.io", "gcr.io", "quay.io", "localhost:30500"],
-        env="ALLOWED_REGISTRIES"
+        alias="ALLOWED_REGISTRIES",
+        description="JSON array of allowed registries"
     )
     
     # Cache configuration
-    cache_enabled: bool = Field(default=True, env="CACHE_ENABLED")
-    cache_ttl: int = Field(default=300, env="CACHE_TTL", ge=0)
+    cache_enabled: bool = Field(default=True, alias="CACHE_ENABLED")
+    cache_ttl: int = Field(default=300, alias="CACHE_TTL", ge=0)
     
     # Enforcement configuration
     enforcement_mode: Literal["enforce", "warn", "monitor"] = Field(
         default="enforce",
-        env="ENFORCEMENT_MODE"
+        alias="ENFORCEMENT_MODE"
     )
     
-    # Namespace policies
+    # Namespace policies - expects JSON object from environment
     namespace_policies: Dict[str, NamespacePolicy] = Field(
         default={
             "kube-system": NamespacePolicy(mode="warn", exempt=False),
@@ -59,86 +65,72 @@ class AdmissionConfig(BaseSettings):
             "gpu-operator": NamespacePolicy(mode="warn", exempt=False),
             "chutes": NamespacePolicy(mode="enforce", exempt=False),
             "default": NamespacePolicy(mode="enforce", exempt=False),
-        }
+        },
+        alias="NAMESPACE_POLICIES",
+        description="JSON object of namespace policies"
     )
     
     # Debug mode
-    debug: bool = Field(default=False, env="DEBUG")
+    debug: bool = Field(default=False, alias="DEBUG")
     
     # Metrics configuration
-    metrics_enabled: bool = Field(default=True, env="METRICS_ENABLED")
+    metrics_enabled: bool = Field(default=True, alias="METRICS_ENABLED")
     
     # Config file support
-    config_file: Optional[Path] = Field(default=None, env="CONFIG_FILE")
+    config_file: Optional[Path] = Field(default=None, alias="CONFIG_FILE")
     
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        # Allow custom parsing for complex fields
-        json_encoders = {
-            Path: str
-        }
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        env_prefix="",  # No prefix since we use aliases
+        populate_by_name=True,  # Allow both field name and alias
+        use_enum_values=True,
+        validate_assignment=True,  # Validate on assignment
+        extra="ignore"  # Ignore extra fields
+    )
     
-    @field_validator("allowed_registries", pre=True)
-    def parse_registries(cls, v):
-        """Parse comma-separated registry list from environment."""
-        if isinstance(v, str):
-            return [r.strip() for r in v.split(",") if r.strip()]
-        return v
-    
-    @field_validator("namespace_policies", pre=True)
-    def parse_namespace_policies(cls, v):
-        """Parse namespace policies from JSON string or dict."""
-        if isinstance(v, str):
-            try:
-                policies_dict = json.loads(v)
-                return {
-                    ns: NamespacePolicy(**policy) if isinstance(policy, dict) else policy
-                    for ns, policy in policies_dict.items()
-                }
-            except json.JSONDecodeError:
-                # Return default if parsing fails
-                return cls.__fields__["namespace_policies"].default
-        elif isinstance(v, dict):
+    @field_validator("namespace_policies", mode="before")
+    @classmethod
+    def parse_namespace_policies(cls, v: Any) -> Dict[str, NamespacePolicy]:
+        """Parse namespace policies from dict, ensuring NamespacePolicy objects."""
+        if isinstance(v, dict):
             return {
                 ns: NamespacePolicy(**policy) if isinstance(policy, dict) else policy
                 for ns, policy in v.items()
             }
         return v
     
-    @field_validator("tls_cert_path", "tls_key_path", "policy_path")
-    def validate_paths(cls, v, field):
-        """Validate that paths exist if specified."""
-        if v is not None and field.name != "policy_path":
-            # For optional paths, only validate if provided
-            path = Path(v) if not isinstance(v, Path) else v
-            if not path.exists():
-                raise ValueError(f"Path does not exist: {path}")
-            return path
-        elif v is not None:
-            # For required paths, ensure they exist or can be created
-            path = Path(v) if not isinstance(v, Path) else v
-            if not path.exists():
-                path.mkdir(parents=True, exist_ok=True)
-            return path
+    @field_validator("tls_cert_path", "tls_key_path", mode="after")
+    @classmethod
+    def validate_tls_paths(cls, v: Optional[Path]) -> Optional[Path]:
+        """Validate that TLS paths exist if specified."""
+        if v is not None and not v.exists():
+            raise ValueError(f"TLS path does not exist: {v}")
+        return v
+    
+    @field_validator("policy_path", mode="after")
+    @classmethod
+    def validate_policy_path(cls, v: Path) -> Path:
+        """Ensure policy path exists or can be created."""
+        if not v.exists():
+            v.mkdir(parents=True, exist_ok=True)
         return v
     
     def __init__(self, **kwargs):
         """Initialize config with support for config file."""
-        # First, check if config file is specified in env or kwargs
-        config_file = kwargs.get("config_file") or Path(
-            kwargs.get("CONFIG_FILE", "/etc/admission-controller/config.json")
-        )
+        # Check if config file is specified
+        config_file_path = kwargs.get("config_file") or kwargs.get("CONFIG_FILE")
+        if not config_file_path:
+            config_file_path = Path("/etc/admission-controller/config.json")
         
         # Load from config file if it exists
         file_config = {}
-        if config_file and Path(config_file).exists():
-            with open(config_file, 'r') as f:
+        if config_file_path and Path(config_file_path).exists():
+            with open(config_file_path, 'r') as f:
                 file_config = json.load(f)
         
-        # Merge configurations (env vars take precedence over file)
+        # Merge configurations (kwargs take precedence over file)
         merged_config = {**file_config, **kwargs}
         
         super().__init__(**merged_config)
@@ -156,59 +148,68 @@ class AdmissionConfig(BaseSettings):
     
     def export_json(self) -> str:
         """Export configuration as JSON."""
-        return self.json(indent=2, exclude_unset=False)
+        return self.model_dump_json(indent=2, exclude_unset=False)
     
     def export_dict(self) -> dict:
         """Export configuration as dictionary."""
-        return self.dict(exclude_unset=False)
+        return self.model_dump(exclude_unset=False)
 
 
 # Optional: Separate configs for different components
 class OPAConfig(BaseSettings):
     """Configuration specific to OPA."""
     
-    opa_binary_path: Path = Field(default="/usr/local/bin/opa", env="OPA_BINARY_PATH")
+    opa_binary_path: Path = Field(
+        default=Path("/usr/local/bin/opa"),
+        alias="OPA_BINARY_PATH"
+    )
     opa_log_level: Literal["debug", "info", "warn", "error"] = Field(
         default="info",
-        env="OPA_LOG_LEVEL"
+        alias="OPA_LOG_LEVEL"
     )
-    opa_decision_logs: bool = Field(default=False, env="OPA_DECISION_LOGS")
-    opa_diagnostic_addr: str = Field(default="0.0.0.0:8282", env="OPA_DIAGNOSTIC_ADDR")
+    opa_decision_logs: bool = Field(default=False, alias="OPA_DECISION_LOGS")
+    opa_diagnostic_addr: str = Field(default="0.0.0.0:8282", alias="OPA_DIAGNOSTIC_ADDR")
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        env_prefix="",
+        populate_by_name=True
+    )
 
 
 class CosignConfig(BaseSettings):
     """Configuration for Cosign integration (Phase 4b)."""
     
-    cosign_enabled: bool = Field(default=False, env="COSIGN_ENABLED")
-    cosign_public_key: Optional[Path] = Field(default=None, env="COSIGN_PUBLIC_KEY")
-    cosign_kms_key: Optional[str] = Field(default=None, env="COSIGN_KMS_KEY")
-    cosign_keyless: bool = Field(default=False, env="COSIGN_KEYLESS")
+    cosign_enabled: bool = Field(default=False, alias="COSIGN_ENABLED")
+    cosign_public_key: Optional[Path] = Field(default=None, alias="COSIGN_PUBLIC_KEY")
+    cosign_kms_key: Optional[str] = Field(default=None, alias="COSIGN_KMS_KEY")
+    cosign_keyless: bool = Field(default=False, alias="COSIGN_KEYLESS")
     cosign_fulcio_url: str = Field(
         default="https://fulcio.sigstore.dev",
-        env="COSIGN_FULCIO_URL"
+        alias="COSIGN_FULCIO_URL"
     )
     cosign_rekor_url: str = Field(
         default="https://rekor.sigstore.dev",
-        env="COSIGN_REKOR_URL"
+        alias="COSIGN_REKOR_URL"
     )
-    cosign_cache_ttl: int = Field(default=3600, env="COSIGN_CACHE_TTL", ge=0)
+    cosign_cache_ttl: int = Field(default=3600, alias="COSIGN_CACHE_TTL", ge=0)
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        env_prefix="",
+        populate_by_name=True
+    )
     
-    @field_validator("cosign_public_key")
-    def validate_public_key(cls, v):
+    @field_validator("cosign_public_key", mode="after")
+    @classmethod
+    def validate_public_key(cls, v: Optional[Path]) -> Optional[Path]:
         """Validate that public key exists if specified."""
-        if v is not None:
-            path = Path(v) if not isinstance(v, Path) else v
-            if not path.exists():
-                raise ValueError(f"Cosign public key not found: {path}")
-            return path
+        if v is not None and not v.exists():
+            raise ValueError(f"Cosign public key not found: {v}")
         return v
 
 
@@ -220,6 +221,15 @@ def load_config(**kwargs) -> AdmissionConfig:
 
 # Example usage and testing
 if __name__ == "__main__":
+    import os
+    
+    # Example: Set environment variables with JSON format
+    os.environ["ALLOWED_REGISTRIES"] = '["docker.io", "gcr.io", "quay.io"]'
+    os.environ["NAMESPACE_POLICIES"] = json.dumps({
+        "kube-system": {"mode": "warn", "exempt": False},
+        "production": {"mode": "enforce", "exempt": False}
+    })
+    
     # Load config (automatically reads from env vars)
     config = AdmissionConfig()
     

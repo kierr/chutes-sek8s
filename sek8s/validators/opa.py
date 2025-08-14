@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Dict, List, Optional
 
-from validators.base import ValidatorBase, ValidationResult
+from sek8s.validators.base import ValidatorBase, ValidationResult
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class OPAValidator(ValidatorBase):
         
         # Get namespace policy
         ns_policy = self.config.get_namespace_policy(namespace)
-        enforcement_mode = ns_policy.get("mode", self.config.enforcement_mode)
+        enforcement_mode = ns_policy.mode if ns_policy else self.config.enforcement_mode
         
         try:
             # Prepare OPA input

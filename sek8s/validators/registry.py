@@ -45,7 +45,7 @@ class RegistryValidator(ValidatorBase):
         if violations:
             # Check enforcement mode
             ns_policy = self.config.get_namespace_policy(namespace)
-            enforcement_mode = ns_policy.get("mode", self.config.enforcement_mode)
+            enforcement_mode = ns_policy.mode if ns_policy else  self.config.enforcement_mode
             
             if enforcement_mode == "monitor":
                 logger.info("Registry violations (monitor mode): %s", violations)

@@ -1,286 +1,312 @@
-# tests/test_main.py
+# tests/unit/test_admission_controller.py
 """
-Unit tests for TEE Admission Controller (function-based)
+Unit tests for async Admission Controller
 """
 
-from unittest.mock import Mock, patch
-from conftest import create_request
+import asyncio
+import json
+import pytest
+from unittest.mock import Mock, AsyncMock, patch, MagicMock
+
+from sek8s.admission_controller import AdmissionController, AdmissionWebhookServer
+from sek8s.validators.base import ValidationResult
+from sek8s.metrics import MetricsCollector
 
 
-def test_validate_allowed_pod(admission_controller, valid_pod):
+@pytest.mark.asyncio
+async def test_validate_allowed_pod(admission_controller, valid_admission_review):
     """Test validation of an allowed pod."""
-    request = create_request(valid_pod)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is True
-    assert message["response"]["status"]["message"] == "Allowed"
+    # Mock validators to return allow
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(valid_admission_review)
+        
+        assert response["response"]["allowed"] is True
+        assert response["response"]["uid"] == "test-uid-123"
 
-def test_validate_pod_untrusted_registry(admission_controller, pod_untrusted_registry):
+
+@pytest.mark.asyncio
+async def test_validate_denied_pod_privileged(admission_controller, privileged_pod_review):
+    """Test rejection of privileged pod by OPA."""
+    # Mock OPA validator to deny
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.deny("Container 'app' has privileged security context")
+        )
+        mock_registry = AsyncMock()
+        mock_registry.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa, mock_registry]))
+        
+        response = await admission_controller.validate_admission(privileged_pod_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "privileged security context" in response["response"]["status"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_validate_untrusted_registry(admission_controller, untrusted_registry_review):
     """Test rejection of pod from untrusted registry."""
-    request = create_request(pod_untrusted_registry)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is False
-    assert "uses disallowed registry" in message["response"]["status"]["message"]
+    # Mock registry validator to deny
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_registry = AsyncMock()
+        mock_registry.validate = AsyncMock(
+            return_value=ValidationResult.deny("Image untrusted-registry.com/malicious:latest uses disallowed registry")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa, mock_registry]))
+        
+        response = await admission_controller.validate_admission(untrusted_registry_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "disallowed registry" in response["response"]["status"]["message"]
 
 
-def test_validate_privileged_pod_rejection(admission_controller, privileged_pod):
-    """Test rejection of privileged pods."""
-    request = create_request(privileged_pod)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is False
-    assert "privileged security context which is not allowed" in message["response"]["status"]["message"]
+@pytest.mark.asyncio
+async def test_validate_with_warnings(admission_controller, valid_admission_review):
+    """Test validation with warnings (warn mode)."""
+    # Mock validator to return warning
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(
+            return_value=ValidationResult.allow(warning="Policy violation detected (monitor mode)")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(valid_admission_review)
+        
+        assert response["response"]["allowed"] is True
+        assert "warnings" in response["response"]
+        assert "Policy violation detected" in response["response"]["warnings"][0]
 
 
-def test_validate_host_network_rejection(admission_controller, host_network_pod):
-    """Test rejection of pods with host network."""
-    request = create_request(host_network_pod)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is False
-    assert "host network not allowed" in message["response"]["status"]["message"]
+@pytest.mark.asyncio
+async def test_cache_hit(admission_controller, valid_admission_review):
+    """Test cache hit for repeated requests."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        # First request
+        response1 = await admission_controller.validate_admission(valid_admission_review)
+        assert response1["response"]["allowed"] is True
+        
+        # Second request (should hit cache)
+        response2 = await admission_controller.validate_admission(valid_admission_review)
+        assert response2["response"]["allowed"] is True
+        
+        # Validator should only be called once due to caching
+        mock_validator.validate.assert_called_once()
 
 
-def test_validate_deployment(admission_controller, valid_deployment):
+@pytest.mark.asyncio
+async def test_validator_exception_handling(admission_controller, valid_admission_review):
+    """Test handling of validator exceptions (fail closed)."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(side_effect=Exception("Validator error"))
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(valid_admission_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "Internal error" in response["response"]["status"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_deployment_validation(admission_controller, deployment_review):
     """Test validation of deployment resources."""
-    request = create_request(valid_deployment)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is True
-    assert "Allowed" in message["response"]["status"]["message"]
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(deployment_review)
+        
+        assert response["response"]["allowed"] is True
 
 
-@patch('subprocess.run')
-def test_verify_image_signature_success(mock_subprocess, admission_controller):
-    """Test successful image signature verification."""
-    # Mock successful cosign verification
-    mock_result = Mock()
-    mock_result.returncode = 0
-    mock_subprocess.return_value = mock_result
-    
-    # Set cosign key in settings
-    admission_controller.settings.cosign_public_key = "/tmp/cosign.pub"
-    
-    result = admission_controller.verify_image_signature("trusted-registry.com/app:signed")
-    
-    assert result is True
-    mock_subprocess.assert_called_once()
+@pytest.mark.asyncio
+async def test_cronjob_validation(admission_controller, cronjob_review):
+    """Test validation of CronJob resources."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(cronjob_review)
+        
+        assert response["response"]["allowed"] is True
 
 
-@patch('subprocess.run')
-def test_verify_image_signature_failure(mock_subprocess, admission_controller):
-    """Test failed image signature verification."""
-    # Mock failed cosign verification
-    mock_result = Mock()
-    mock_result.returncode = 1
-    mock_subprocess.return_value = mock_result
-    
-    # Set cosign key in settings
-    admission_controller.settings.cosign_public_key = "/tmp/cosign.pub"
-    
-    result = admission_controller.verify_image_signature("untrusted-registry.com/app:unsigned")
-    
-    assert result is False
+@pytest.mark.asyncio
+async def test_namespace_creation_denied(admission_controller, namespace_creation_review):
+    """Test that namespace creation is denied."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.deny("Creation of new namespaces is prohibited")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa]))
+        
+        response = await admission_controller.validate_admission(namespace_creation_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "namespaces is prohibited" in response["response"]["status"]["message"]
 
 
-def test_verify_image_signature_no_key(admission_controller):
-    """Test image signature verification when no key is configured."""
-    # No cosign key configured
-    admission_controller.settings.cosign_public_key = None
-    
-    result = admission_controller.verify_image_signature("any-registry.com/app:latest")
-    
-    # Should pass when no verification is configured
-    assert result is True
+@pytest.mark.asyncio
+async def test_host_network_denied(admission_controller, host_network_pod_review):
+    """Test rejection of pod with host network."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.deny("Pod uses host network which is not allowed")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa]))
+        
+        response = await admission_controller.validate_admission(host_network_pod_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "host network" in response["response"]["status"]["message"]
 
 
-@patch('hashlib.sha256')
-@patch('builtins.open')
-def test_calculate_file_hash(mock_open, mock_sha256, admission_controller):
-    """Test file hash calculation."""
-    # Mock file reading
-    mock_file = Mock()
-    mock_file.read.side_effect = [b"chunk1", b"chunk2", b""]
-    mock_open.return_value.__enter__.return_value = mock_file
-    
-    # Mock hashlib
-    mock_hasher = Mock()
-    mock_hasher.hexdigest.return_value = "abcd1234"
-    mock_sha256.return_value = mock_hasher
-    
-    result = admission_controller.calculate_file_hash("/tmp/test-file")
-    
-    assert result == "abcd1234"
-    assert mock_hasher.update.call_count == 2
+@pytest.mark.asyncio
+async def test_invalid_hostpath_denied(admission_controller, invalid_hostpath_review):
+    """Test rejection of invalid hostPath volumes."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.deny("hostPath volume '/etc' not allowed. Only /cache paths are permitted")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa]))
+        
+        response = await admission_controller.validate_admission(invalid_hostpath_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "/cache paths are permitted" in response["response"]["status"]["message"]
 
 
-def test_other_resources_allowed(admission_controller, service_resource):
-    """Test that non-pod/deployment resources are allowed by default."""
-    request = create_request(service_resource)
-    
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is True
-    assert "resource allowed" in message["response"]["status"]["message"]
+@pytest.mark.asyncio
+async def test_valid_cache_mount_allowed(admission_controller, valid_cache_mount_review):
+    """Test that valid /cache mounts are allowed."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(valid_cache_mount_review)
+        
+        assert response["response"]["allowed"] is True
 
 
-# def test_settings_defaults():
-#     """Test default settings values."""
-#     settings = TEEAdmissionSettings(
-#         tls_cert_file="/tmp/test.crt",
-#         tls_private_key_file="/tmp/test.key"
-#     )
-    
-#     assert settings.port == 9443
-#     assert settings.address == "0.0.0.0"
-#     assert "your-trusted-registry.com" in settings.allowed_registries
-#     assert settings.verify_binary_hash is True
+@pytest.mark.asyncio
+async def test_no_resource_limits_denied(admission_controller, no_limits_pod_review):
+    """Test rejection of pods without resource limits."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.deny("Container 'app' missing resource limits")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa]))
+        
+        response = await admission_controller.validate_admission(no_limits_pod_review)
+        
+        assert response["response"]["allowed"] is False
+        assert "missing resource limits" in response["response"]["status"]["message"]
 
 
-# def test_settings_override():
-#     """Test settings override."""
-#     settings = AdmissionSettings(
-#         tls_cert_file="/custom/cert.pem",
-#         tls_private_key_file="/custom/key.pem", 
-#         port=8443,
-#         address="127.0.0.1",
-#         allowed_registries=["custom-registry.com"],
-#         verify_binary_hash=False
-#     )
-    
-#     assert settings.port == 8443
-#     assert settings.address == "127.0.0.1"
-#     assert settings.allowed_registries == ["custom-registry.com"]
-#     assert settings.verify_binary_hash is False
+@pytest.mark.asyncio
+async def test_service_allowed(admission_controller, service_review):
+    """Test that service resources are allowed."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(service_review)
+        
+        assert response["response"]["allowed"] is True
 
 
-def test_admission_review_format(admission_controller, valid_pod, admission_review_template):
-    """Test complete admission review request/response format."""
-    admission_review = admission_review_template.copy()
-    admission_review["request"]["object"] = valid_pod
-    
-    allowed, message = admission_controller.validate_request(admission_review["request"])
-    
-    # Construct expected response structure
-    expected_response_structure = {
-        "apiVersion": "admission.k8s.io/v1",
-        "kind": "AdmissionReview", 
-        "response": {
-            "uid": "test-uid-123",
-            "allowed": allowed
-        }
-    }
-    
-    assert allowed is True
-    assert expected_response_structure["response"]["uid"] == admission_review["request"]["uid"]
+@pytest.mark.asyncio
+async def test_exempt_namespace(admission_controller, exempt_namespace_review):
+    """Test that exempt namespaces bypass certain validations."""
+    # In exempt namespace, registry validator should still check but with monitor mode
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(
+            return_value=ValidationResult.allow(
+                warning="Registry violations (monitor mode): Image untrusted-registry.com/app:latest uses disallowed registry"
+            )
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        response = await admission_controller.validate_admission(exempt_namespace_review)
+        
+        assert response["response"]["allowed"] is True
+        assert "warnings" in response["response"]
 
 
-@patch('tee_admission_controller.main.TEEAdmissionController.verify_self_attestation')
-def test_self_attestation_check(mock_verify, admission_controller):
-    """Test that self-attestation is checked before processing requests."""
-    mock_verify.return_value = True
-    
-    # This would normally be called by handle_admission_request
-    result = admission_controller.verify_self_attestation()
-    
-    assert result is True
-    mock_verify.assert_called_once()
+@pytest.mark.asyncio
+async def test_multiple_validators_combined(admission_controller, valid_admission_review):
+    """Test multiple validators results are combined correctly."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_opa = AsyncMock()
+        mock_opa.validate = AsyncMock(
+            return_value=ValidationResult.allow(warning="OPA warning")
+        )
+        mock_registry = AsyncMock()
+        mock_registry.validate = AsyncMock(
+            return_value=ValidationResult.allow(warning="Registry warning")
+        )
+        mock_validators.__iter__ = Mock(return_value=iter([mock_opa, mock_registry]))
+        
+        response = await admission_controller.validate_admission(valid_admission_review)
+        
+        assert response["response"]["allowed"] is True
+        assert len(response["response"]["warnings"]) == 2
 
 
-def test_multiple_containers_validation(admission_controller):
-    """Test validation of pods with multiple containers."""
-    pod_multi_containers = {
-        "kind": "Pod",
-        "metadata": {
-            "name": "multi-container-pod",
-            "labels": {
-                "tee.verified": "true"
-            }
-        },
-        "spec": {
-            "containers": [
-                {
-                    "name": "app1",
-                    "image": "trusted-registry.com/app1:latest",
-                    "securityContext": {
-                        "privileged": False
-                    }
-                },
-                {
-                    "name": "app2", 
-                    "image": "trusted-registry.com/app2:latest",
-                    "securityContext": {
-                        "privileged": False
-                    }
-                }
-            ]
-        }
-    }
-    
-    request = create_request(pod_multi_containers)
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is True
-    assert "Allowed" in message["response"]["status"]["message"]
+@pytest.mark.asyncio
+async def test_health_check(admission_controller):
+    """Test health check aggregates validator health."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_healthy = AsyncMock()
+        mock_healthy.health_check = AsyncMock(return_value=True)
+        mock_healthy.__class__.__name__ = "HealthyValidator"
+        
+        mock_unhealthy = AsyncMock()
+        mock_unhealthy.health_check = AsyncMock(return_value=False)
+        mock_unhealthy.__class__.__name__ = "UnhealthyValidator"
+        
+        mock_validators.__iter__ = Mock(return_value=iter([mock_healthy, mock_unhealthy]))
+        
+        health_status = await admission_controller.health_check()
+        
+        assert health_status["healthy"] is False
+        assert health_status["validators"]["HealthyValidator"]["healthy"] is True
+        assert health_status["validators"]["UnhealthyValidator"]["healthy"] is False
 
 
-def test_mixed_registry_containers_rejection(admission_controller):
-    """Test rejection when one container uses untrusted registry."""
-    pod_mixed_registries = {
-        "kind": "Pod",
-        "metadata": {
-            "name": "mixed-registry-pod",
-            "labels": {
-                "tee.verified": "true"
-            }
-        },
-        "spec": {
-            "containers": [
-                {
-                    "name": "trusted-app",
-                    "image": "trusted-registry.com/app:latest"
-                },
-                {
-                    "name": "untrusted-app",
-                    "image": "untrusted-registry.com/bad:latest"
-                }
-            ]
-        }
-    }
-    
-    request = create_request(pod_mixed_registries)
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is False
-    assert "registry not allowed" in message["response"]["status"]["message"]
-
-
-def test_empty_labels_validation(admission_controller):
-    """Test handling of pods with no labels at all."""
-    pod_no_labels = {
-        "kind": "Pod",
-        "metadata": {
-            "name": "no-labels-pod"
-            # No labels key at all
-        },
-        "spec": {
-            "containers": [
-                {
-                    "name": "app",
-                    "image": "trusted-registry.com/app:latest"
-                }
-            ]
-        }
-    }
-    
-    request = create_request(pod_no_labels)
-    allowed, message = admission_controller.validate_request(request)
-    
-    assert allowed is False
-    assert "tee.verified" in message["response"]["status"]["message"]
+@pytest.mark.asyncio
+async def test_metrics_recording(admission_controller, valid_admission_review):
+    """Test that metrics are recorded correctly."""
+    with patch.object(admission_controller, 'validators') as mock_validators:
+        mock_validator = AsyncMock()
+        mock_validator.validate = AsyncMock(return_value=ValidationResult.allow())
+        mock_validators.__iter__ = Mock(return_value=iter([mock_validator]))
+        
+        # Reset metrics
+        admission_controller.metrics = MetricsCollector()
+        
+        response = await admission_controller.validate_admission(valid_admission_review)
+        
+        assert admission_controller.metrics.admission_total["allowed"] == 1
+        assert "Pod_allowed" in admission_controller.metrics.admission_by_kind
+        assert "CREATE_allowed" in admission_controller.metrics.admission_by_operation
