@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import json
 import logging
-from sek8s.admission.admission_controller import AdmissionController
+from sek8s.admission_controller import AdmissionController
 from sek8s.config import AdmissionSettings
 
 app = Flask(__name__)

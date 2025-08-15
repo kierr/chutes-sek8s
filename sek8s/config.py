@@ -154,8 +154,6 @@ class AdmissionConfig(BaseSettings):
         """Export configuration as dictionary."""
         return self.model_dump(exclude_unset=False)
 
-
-# Optional: Separate configs for different components
 class OPAConfig(BaseSettings):
     """Configuration specific to OPA."""
     
@@ -217,33 +215,3 @@ class CosignConfig(BaseSettings):
 def load_config(**kwargs) -> AdmissionConfig:
     """Load configuration with environment variables and optional overrides."""
     return AdmissionConfig(**kwargs)
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    import os
-    
-    # Example: Set environment variables with JSON format
-    os.environ["ALLOWED_REGISTRIES"] = '["docker.io", "gcr.io", "quay.io"]'
-    os.environ["NAMESPACE_POLICIES"] = json.dumps({
-        "kube-system": {"mode": "warn", "exempt": False},
-        "production": {"mode": "enforce", "exempt": False}
-    })
-    
-    # Load config (automatically reads from env vars)
-    config = AdmissionConfig()
-    
-    # Print configuration
-    print("=== Admission Controller Configuration ===")
-    print(config.export_json())
-    
-    # Access configuration values
-    print(f"\nServer: {config.bind_address}:{config.port}")
-    print(f"OPA URL: {config.opa_url}")
-    print(f"Allowed Registries: {config.allowed_registries}")
-    print(f"Cache TTL: {config.cache_ttl}s")
-    
-    # Check namespace policies
-    for ns in ["default", "kube-system", "custom"]:
-        policy = config.get_namespace_policy(ns)
-        print(f"\nNamespace '{ns}': mode={policy.mode}, exempt={policy.exempt}")
