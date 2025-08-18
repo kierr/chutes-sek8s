@@ -49,7 +49,7 @@ class OPAValidator(ValidatorBase):
             opa_input = {
                 "request": request,
                 "allowed_registries": self.config.allowed_registries,
-                "namespace_policy": ns_policy
+                "namespace_policy": enforcement_mode
             }
             
             # Query OPA
