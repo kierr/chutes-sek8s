@@ -25,6 +25,7 @@ webhooks:
           operator: NotIn
           values:
             - kube-system  # Allow kube-system for initial setup only
+            - gatekeeper-system
     failurePolicy: Fail  # Fail closed if validator is down
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
