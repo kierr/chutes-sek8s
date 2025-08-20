@@ -66,21 +66,6 @@
         apply:
           tags: chutes-gpu
 
-- name: Setup admission controller
-  hosts: server
-  become: true
-  tags:
-    - admission-controller
-  handlers:
-    - name: Global handlers
-      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
-  tasks:
-    - name: Admission controller
-      ansible.builtin.include_role:
-        name: admission-controller
-        apply:
-          tags: admission-controller
-
 - name: Setup gatekeeper
   hosts: server
   become: true
@@ -95,6 +80,21 @@
         name: gatekeeper
         apply:
           tags: gatekeeper
+
+- name: Setup admission controller
+  hosts: server
+  become: true
+  tags:
+    - admission-controller
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Admission controller
+      ansible.builtin.include_role:
+        name: admission-controller
+        apply:
+          tags: admission-controller
 
 - name: Cleanup to ensure fresh state for cloud init and k3s
   hosts: server

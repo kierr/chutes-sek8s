@@ -1,7 +1,17 @@
 ---
+---
+- name: Ensure namespaces exist
+  kubernetes.core.k8s:
+    name: "{{ item }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  loop:
+    - gatekeeper-system
+
 - name: Ensure K3s manifests directory exists
   ansible.builtin.file:
-    path: /var/lib/rancher/k3s/server/manifests
+    path: /var/lib/rancher/k3s/server/manifests/gatekeeper
     state: directory
     owner: root
     group: root
@@ -9,31 +19,44 @@
 
 - name: Find generated Helm manifests
   ansible.builtin.find:
-    paths: /tmp/gatekeeper-manifests
+    paths: "{{ gatekeeper_manifest_dir }}"
     patterns: "*.yaml"
   register: helm_manifests
 
 - name: Copy Helm-generated manifests to K3s manifests directory
   ansible.builtin.copy:
     src: "{{ item.path }}"
-    dest: "/var/lib/rancher/k3s/server/manifests/{{ item.path | basename }}"
+    dest: "/var/lib/rancher/k3s/server/manifests/gatekeeper/{{ item.path | basename }}"
     remote_src: yes
     owner: root
     group: root
     mode: '0600'
   loop: "{{ helm_manifests.files }}"
+  notify: restart k3s
 
 - name: Create custom Gatekeeper configuration overlay
   ansible.builtin.copy:
     src: manifests/gatekeeper-config-overlay.yaml
-    dest: /var/lib/rancher/k3s/server/manifests/gatekeeper-config-overlay.yaml
+    dest: /var/lib/rancher/k3s/server/manifests/gatekeeper/gatekeeper-config-overlay.yaml
     owner: root
     group: root
     mode: '0600'
+  notify: restart k3s
+
+- name: Flush handlers to restart K3s before proceeding
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for K3s service to be running after restart
+  ansible.builtin.systemd:
+    name: k3s
+  register: k3s_status
+  until: k3s_status.status.ActiveState == "active"
+  retries: 30
+  delay: 5
 
 - name: Protect all manifests from modification
   ansible.builtin.file:
-    path: "{{ item.path | regex_replace('/tmp/gatekeeper-manifests/', '/var/lib/rancher/k3s/server/manifests/') }}"
+    path: "/var/lib/rancher/k3s/server/manifests/gatekeeper/{{ item.path | basename }}"
     owner: root
     group: root
     mode: '0400'
@@ -42,7 +65,7 @@
 
 - name: Protect custom config overlay
   ansible.builtin.file:
-    path: /var/lib/rancher/k3s/server/manifests/gatekeeper-config-overlay.yaml
+    path: /var/lib/rancher/k3s/server/manifests/gatekeeper/gatekeeper-config-overlay.yaml
     owner: root
     group: root
     mode: '0400'
@@ -50,8 +73,5 @@
 
 - name: Cleanup Helm temporary files
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ gatekeeper_helm_temp }}"
     state: absent
-  loop:
-    - "{{ gatekeeper_helm_temp }}"
-    - /tmp/gatekeeper-manifests

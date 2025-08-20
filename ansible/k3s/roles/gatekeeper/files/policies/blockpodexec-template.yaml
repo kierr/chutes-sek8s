@@ -1,0 +1,79 @@
+---
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: blockpodexec
+  labels:
+    gatekeeper.sh/system: "yes"
+spec:
+  crd:
+    spec:
+      names:
+        kind: BlockPodExec
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              description: "Any container that uses an image that matches an entry in this list will be excluded from enforcement."
+              type: array
+              items:
+                type: string
+            exemptNamespaces:
+              description: "Any namespace listed here will be exempt from enforcement."
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      code:
+        - engine: Rego
+          source:
+            version: "v1"
+            rego: |
+              package blockpodexec
+
+              violation contains {"msg": msg} if {
+                  # Check for pod/exec operations
+                  input.review.operation == "CONNECT"
+                  input.review.kind.kind == "Pod"
+                  input.review.subResource == "exec"
+                  
+                  # Check if namespace is not exempt
+                  not is_exempt_namespace
+                  
+                  msg := "Pod exec operations are not allowed in this cluster"
+              }
+
+              violation contains {"msg": msg} if {
+                  # Check for pod/attach operations
+                  input.review.operation == "CONNECT"
+                  input.review.kind.kind == "Pod"
+                  input.review.subResource == "attach"
+                  
+                  # Check if namespace is not exempt
+                  not is_exempt_namespace
+                  
+                  msg := "Pod attach operations are not allowed in this cluster"
+              }
+
+              violation contains {"msg": msg} if {
+                  # Check for pod/portforward operations
+                  input.review.operation == "CONNECT"
+                  input.review.kind.kind == "Pod"
+                  input.review.subResource == "portforward"
+                  
+                  # Check if namespace is not exempt
+                  not is_exempt_namespace
+                  
+                  msg := "Pod port-forward operations are not allowed in this cluster"
+              }
+
+              is_exempt_namespace if {
+                  input.review.namespace in input.parameters.exemptNamespaces
+              }
+
+              is_exempt_namespace if {
+                  # System namespaces are always exempt
+                  input.review.namespace in ["kube-system", "gatekeeper-system", "kube-public", "kube-node-lease"]
+              }

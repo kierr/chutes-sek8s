@@ -1,13 +1,12 @@
 ---
-- name: Wait for Gatekeeper to be ready
-  ansible.builtin.uri:
-    url: https://{{ ansible_default_ipv4.address }}:{{ k3s_api_port }}/healthz
-    validate_certs: no
-    method: GET
-  register: api_health
-  until: api_health.status == 200
+- name: Wait for Gatekeeper deployment to be ready
+  ansible.builtin.shell: |
+    kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get deployment gatekeeper-controller-manager -n gatekeeper-system -o jsonpath='{.status.readyReplicas}'
+  register: gatekeeper_ready
+  until: gatekeeper_ready.stdout | int > 0
   retries: 30
   delay: 10
+  changed_when: false
 
 - name: Wait for ConstraintTemplate CRD to be available
   ansible.builtin.shell: |
@@ -18,16 +17,20 @@
   delay: 10
   changed_when: false
 
-- name: Copy custom Gatekeeper policy files
+- name: Copy custom Gatekeeper policy templates
   ansible.builtin.copy:
     src: "policies/{{ item }}"
-    dest: "/var/lib/rancher/k3s/server/manifests/{{ item }}"
+    dest: "/var/lib/rancher/k3s/server/manifests/gatekeeper/{{ item }}"
     owner: root
     group: root
     mode: '0600'
   loop:
     - blockpodexec-template.yaml
     - webhookprotection-template.yaml
+  notify: restart k3s
+
+- name: Flush handlers to restart K3s before proceeding
+  ansible.builtin.meta: flush_handlers
 
 - name: Wait for ConstraintTemplates to be processed
   ansible.builtin.shell: |
@@ -44,7 +47,7 @@
 - name: Copy custom Gatekeeper constraint files
   ansible.builtin.copy:
     src: "policies/{{ item }}"
-    dest: "/var/lib/rancher/k3s/server/manifests/{{ item }}"
+    dest: "/var/lib/rancher/k3s/server/manifests/gatekeeper/{{ item }}"
     owner: root
     group: root
     mode: '0600'
@@ -54,7 +57,7 @@
 
 - name: Protect custom policy manifests
   ansible.builtin.file:
-    path: /var/lib/rancher/k3s/server/manifests/{{ item }}
+    path: /var/lib/rancher/k3s/server/manifests/gatekeeper/{{ item }}
     owner: root
     group: root
     mode: '0400'

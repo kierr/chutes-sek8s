@@ -14,21 +14,3 @@ spec:
   match:
     - excludedNamespaces: ["chutes", "monitoring"]
       processes: ["*"]
-  # Validation specific to our TEE environment
-  validation:
-    traces:
-      - user:
-          kind:
-            group: "user"
-            version: "v1"
-            kind: "User"
-        kind:
-          group: ""
-          version: "v1"
-          kind: "Pod"
-        dump: false
-  # Additional parameters for custom policies
-  parameters:
-    # Custom parameters can go here
-    teeEnvironment: true
-    admissionControllerProtection: true
