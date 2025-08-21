@@ -18,7 +18,7 @@ webhooks:
       - operations: ["*"]
         apiGroups: ["*"]
         apiVersions: ["*"]
-        resources: ["*"]
+        resources: ['*', 'pods/ephemeralcontainers', 'pods/exec', 'pods/log', 'pods/eviction', 'pods/portforward', 'pods/proxy', 'pods/attach', 'pods/binding', 'pods/resize', 'deployments/scale', 'replicasets/scale', 'statefulsets/scale', 'replicationcontrollers/scale', 'services/proxy', 'nodes/proxy', 'services/status']
     namespaceSelector:
       matchExpressions:
         - key: kubernetes.io/metadata.name

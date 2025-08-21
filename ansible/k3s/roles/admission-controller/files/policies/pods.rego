@@ -295,3 +295,37 @@ allowed_env_vars := {
     "LC_ALL",
     "TZ"
 }
+
+# =============================================================================
+# EXEC/ATTACH  RESTRICTIONS
+# =============================================================================
+
+# Block ALL exec operations
+deny contains msg if {
+    input.request.kind.kind == "PodExecOptions"
+    not is_exempt_namespace
+    msg := "Pod exec operations are not permitted."
+}
+
+# Block ALL attach operations
+deny contains msg if {
+    input.request.kind.kind == "PodAttachOptions"
+    not is_exempt_namespace
+    msg := "Pod attach operations are not permitted."
+}
+
+# Block ALL port forward operations
+deny contains msg if {
+    input.request.kind.kind == "PodPortForwardOptions"
+    not is_exempt_namespace
+    msg := "Pod port forward operations are not permitted."
+}
+
+is_exempt_namespace if {
+    input.request.namespace in input.parameters.exemptNamespaces
+}
+
+is_exempt_namespace if {
+    # System namespaces are always exempt
+    input.request.namespace in ["kube-system", "gatekeeper-system", "kube-public", "kube-node-lease"]
+}
