@@ -8,11 +8,6 @@ import future.keywords.in
 # HELPER FUNCTIONS
 # =============================================================================
 
-# Check if operation is from Gatekeeper itself
-is_gatekeeper_internal_operation if {
-    startswith(input.request.userInfo.username, "system:serviceaccount:gatekeeper-system:")
-}
-
 # Check if operation is from K3s system components
 is_k3s_system_operation if {
     input.request.userInfo.username in [
@@ -21,11 +16,6 @@ is_k3s_system_operation if {
         "system:k3s",
         "system:apiserver"
     ]
-}
-
-# Check if user is a system master
-is_system_master if {
-    "system:masters" in input.request.userInfo.groups
 }
 
 # Check if this is a K3s system CRD
@@ -37,13 +27,6 @@ is_k3s_system_crd if {
 is_k3s_system_crd if {
     input.request.kind.kind == "CustomResourceDefinition"
     endswith(input.request.name, ".cattle.io")
-}
-
-# Check for emergency/break-glass user
-is_emergency_user if {
-    input.request.userInfo.username in [
-        "system:admin",
-    ]
 }
 
 # Check if this is a bootstrap operation (during initial setup)
@@ -68,19 +51,6 @@ is_bootstrap_operation if {
     # Allow K3s system operations during bootstrap/restart
     is_k3s_system_operation
     is_k3s_system_crd
-}
-
-# Check for Gatekeeper bypass annotations/labels
-has_gatekeeper_bypass_annotation if {
-    # Check annotations
-    annotation_keys := object.get(input.request.object.metadata, "annotations", {})
-    annotation_keys["admission.gatekeeper.sh/ignore"]
-}
-
-has_gatekeeper_bypass_annotation if {
-    # Check labels
-    label_keys := object.get(input.request.object.metadata, "labels", {})
-    label_keys["admission.gatekeeper.sh/ignore"]
 }
 
 # Helper to check if request is for system namespace
