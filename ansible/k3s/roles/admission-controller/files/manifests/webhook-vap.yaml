@@ -1,0 +1,26 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: protect-vwcs
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["admissionregistration.k8s.io"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "DELETE", "UPDATE"]
+      resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+      scope: "Cluster"
+  validations:
+    message: "All VWCs actions are forbidden"
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: protect-vwcs-binding
+spec:
+  policyName: protect-vwcs
+  validationActions: [Deny]  # Enforce denial on failure
+  matchResources: {}  # Empty matchResources applies to all namespaces/resources

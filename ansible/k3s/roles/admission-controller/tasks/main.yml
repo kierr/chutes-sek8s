@@ -26,3 +26,7 @@
 - name: Configure K3s webhook
   ansible.builtin.include_tasks: configure-k3s-webhook.yml
   tags: k3s-webhook
+
+- name: Secure webhook
+  ansible.builtin.include_tasks: deploy-vap.yml
+  tags: admission-policies
