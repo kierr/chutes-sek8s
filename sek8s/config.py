@@ -78,6 +78,12 @@ class AdmissionConfig(BaseSettings):
     
     # Config file support
     config_file: Optional[Path] = Field(default=None, alias="CONFIG_FILE")
+
+    # Cosign config
+    cosign_oidc_identity_regex: str = Field(default="^https://github.com/your-org/.*")
+    cosign_oidc_issuer: str = Field(default="https://token.actions.githubusercontent.com")
+    cosign_rekor_url: str = Field(default="https://rekor.sigstore.dev")
+    cosign_public_key: str = Field(default="/root/.cosign/cosign.pub")
     
     model_config = SettingsConfigDict(
         env_file=".env",

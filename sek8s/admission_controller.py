@@ -14,7 +14,8 @@ from aiohttp import web
 from cachetools import TTLCache
 
 from sek8s.config import AdmissionConfig
-from sek8s.validators.base import ValidationResult, ValidatorBase
+from sek8s.validators.base import ValidatorBase
+from sek8s.validators.cosign import CosignValidator
 from sek8s.validators.opa import OPAValidator
 from sek8s.validators.registry import RegistryValidator
 from sek8s.metrics import MetricsCollector
@@ -51,6 +52,8 @@ class AdmissionController:
         
         # Registry validator (lightweight, always enabled)
         self.validators.append(RegistryValidator(self.config))
+
+        self.validators.append(CosignValidator(self.config))
         
         logger.info("Initialized validators: %s", 
                    [v.__class__.__name__ for v in self.validators])

@@ -1,7 +1,11 @@
 ---
 - name: Install OPA binary
   ansible.builtin.include_tasks: install-opa.yml
-  tags: opa-install
+  tags: install-opa
+
+- name: Install Cosign
+  ansible.builtin.include_tasks: install-cosign.yml
+  tags: install-cosign
 
 - name: Install and setup admission controller
   ansible.builtin.include_tasks: install-admission-controller.yml
