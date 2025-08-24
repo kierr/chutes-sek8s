@@ -11,7 +11,9 @@ def pytest_configure(config):
 
     os.environ["POLICY_PATH"] = os.path.join(os.getcwd(), "opa/policies")
 
-    print(os.environ["PATH"])
+    os.environ.setdefault("DEBUG", "false")
+    os.environ.setdefault("REGISTRY_URL", "localhost:5000")
+    os.environ.setdefault("COSIGN_PASSWORD", "testpassword")
 
     # Print confirmation for debugging
     print("Environment variables set up for testing!")

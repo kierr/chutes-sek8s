@@ -5,5 +5,5 @@ services:
       - local.env
 
 networks:
-  base:
-    name: $${PROJECT}-$${BRANCH_NAME:local}-$${BUILD_NUMBER:0}
+  test-network:
+    name: "${PROJECT}-${BRANCH_NAME}-${BUILD_NUMBER}"

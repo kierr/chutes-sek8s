@@ -22,11 +22,24 @@ build:
 .PHONY: infrastructure
 infrastructure: ##@development Set up infrastructure for tests
 infrastructure:
-	k3d cluster create dev --config config/k3d-config.yml
+	${DC} up opa registry -d
+	./tests/scripts/setup-test-images.sh
 
 .PHONY: clean
 clean: ##@development Clean up any dependencies
 clean:
+	${DC} down opa registry --remove-orphans --volumes
+	docker network prune -f
+	docker container prune -f
+
+.PHONY: k3s-infrastructure
+k3s-infrastructure: ##@development Set up infrastructure for tests
+k3s-infrastructure:
+	k3d cluster create dev --config config/k3d-config.yml
+
+.PHONY: k3s-clean
+k3s-clean: ##@development Clean up any dependencies
+k3s-clean:
 	k3d cluster delete dev
 
 .PHONY: redeploy
