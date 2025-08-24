@@ -286,12 +286,17 @@ class TestCosignConfig:
         """Test default Cosign configuration."""
         config = CosignConfig()
         
-        assert config.cosign_enabled is False
-        assert config.cosign_public_key is None
-        assert config.cosign_keyless is False
-        assert config.cosign_fulcio_url == "https://fulcio.sigstore.dev"
-        assert config.cosign_rekor_url == "https://rekor.sigstore.dev"
-        assert config.cosign_cache_ttl == 3600
+        
+        assert config.fulcio_url == "https://fulcio.sigstore.dev"
+        assert len(config.registry_configs) == 1
+        assert config.cache_ttl == 3600
+
+
+        for registry in config.registry_configs:
+            assert registry.require_signature is True
+            assert registry.public_key is None
+            assert registry.keyless_identity_regex is None
+            assert registry.rekor_url == "https://rekor.sigstore.dev"    
     
     def test_cosign_config_with_key(self):
         """Test Cosign config with public key."""

@@ -7,6 +7,9 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class NamespacePolicy(BaseSettings):
@@ -78,12 +81,6 @@ class AdmissionConfig(BaseSettings):
     
     # Config file support
     config_file: Optional[Path] = Field(default=None, alias="CONFIG_FILE")
-
-    # Cosign config
-    cosign_oidc_identity_regex: str = Field(default="^https://github.com/your-org/.*")
-    cosign_oidc_issuer: str = Field(default="https://token.actions.githubusercontent.com")
-    cosign_rekor_url: str = Field(default="https://rekor.sigstore.dev")
-    cosign_public_key: str = Field(default="/root/.cosign/cosign.pub")
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -160,6 +157,7 @@ class AdmissionConfig(BaseSettings):
         """Export configuration as dictionary."""
         return self.model_dump(exclude_unset=False)
 
+
 class OPAConfig(BaseSettings):
     """Configuration specific to OPA."""
     
@@ -183,38 +181,175 @@ class OPAConfig(BaseSettings):
     )
 
 
-class CosignConfig(BaseSettings):
-    """Configuration for Cosign integration (Phase 4b)."""
+class CosignRegistryConfig(BaseSettings):
+    """Configuration for cosign verification per registry."""
+    # Registry pattern (can include wildcards)
+    registry: str
     
-    cosign_enabled: bool = Field(default=False, alias="COSIGN_ENABLED")
-    cosign_public_key: Optional[Path] = Field(default=None, alias="COSIGN_PUBLIC_KEY")
-    cosign_kms_key: Optional[str] = Field(default=None, alias="COSIGN_KMS_KEY")
-    cosign_keyless: bool = Field(default=False, alias="COSIGN_KEYLESS")
-    cosign_fulcio_url: str = Field(
-        default="https://fulcio.sigstore.dev",
-        alias="COSIGN_FULCIO_URL"
-    )
-    cosign_rekor_url: str = Field(
-        default="https://rekor.sigstore.dev",
-        alias="COSIGN_REKOR_URL"
-    )
-    cosign_cache_ttl: int = Field(default=3600, alias="COSIGN_CACHE_TTL", ge=0)
+    # Whether signature verification is required
+    require_signature: bool = True
+    
+    # Verification method
+    verification_method: Literal["key", "keyless", "disabled"] = "key"
+    
+    # Public key path for key-based verification
+    public_key: Optional[Path] = None
+    
+    # Keyless verification settings
+    keyless_identity_regex: Optional[str] = None
+    keyless_issuer: Optional[str] = None
+    
+    # Rekor transparency log URL
+    rekor_url: str = "https://rekor.sigstore.dev"
+    
+    # Fulcio CA URL for keyless verification
+    fulcio_url: str = "https://fulcio.sigstore.dev"
     
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        case_sensitive=False
+    )
+
+
+class CosignConfig(BaseSettings):
+    """Configuration for Cosign integration (Phase 4b)."""
+    
+    cache_ttl: int = Field(default=3600, ge=0)
+    
+    # Cosign config
+    oidc_identity_regex: str = Field(default="^https://github.com/your-org/.*")
+    oidc_issuer: str = Field(default="https://token.actions.githubusercontent.com")
+    cosign_rekor_url: str = Field(default="https://rekor.sigstore.dev")
+    fulcio_url: str = Field(default="https://fulcio.sigstore.dev")
+
+    # Registry configurations - loaded from file or defaults
+    registry_configs: List[CosignRegistryConfig] = Field(
+        default_factory=list,
+        description="List of cosign configurations per registry"
+    )
+    
+    # Cosign config file path
+    config_file: Optional[Path] = Field(
+        default=None,
+        description="Path to cosign registry configuration JSON file"
+    )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
         case_sensitive=False,
-        env_prefix="",
+        env_prefix="COSIGN_",
         populate_by_name=True
     )
     
-    @field_validator("cosign_public_key", mode="after")
+    @field_validator("registry_configs", mode="before")
     @classmethod
-    def validate_public_key(cls, v: Optional[Path]) -> Optional[Path]:
-        """Validate that public key exists if specified."""
-        if v is not None and not v.exists():
-            raise ValueError(f"Cosign public key not found: {v}")
+    def parse_registry_configs(cls, v: Any) -> List[CosignRegistryConfig]:
+        """Parse cosign registry configs from list of dicts."""
+        if isinstance(v, list):
+            configs = []
+            for item in v:
+                if isinstance(item, dict):
+                    configs.append(CosignRegistryConfig(**item))
+                elif isinstance(item, CosignRegistryConfig):
+                    configs.append(item)
+            return configs
         return v
+    
+    def __init__(self, **kwargs):
+        """Initialize cosign config with support for config file."""
+        super().__init__(**kwargs)
+        
+        # Load registry configs after initialization
+        self._load_registry_configs()
+    
+    def _load_registry_configs(self) -> None:
+        """Load registry configurations from file or use defaults."""
+        # If configs are already populated, don't override
+        if self.registry_configs:
+            logger.info(f"Using {len(self.registry_configs)} pre-configured registry configs")
+            return
+        
+        # Try to load from config file
+        config_file_path = self.config_file
+        if not config_file_path:
+            config_file_path = Path("/etc/admission-controller/cosign-registries.json")
+        
+        if config_file_path and config_file_path.exists():
+            try:
+                with open(config_file_path, 'r') as f:
+                    config_data = json.load(f)
+                
+                # Handle different JSON structures
+                if isinstance(config_data, dict) and "registries" in config_data:
+                    registry_data = config_data["registries"]
+                elif isinstance(config_data, list):
+                    registry_data = config_data
+                else:
+                    logger.warning(f"Invalid cosign config format in {config_file_path}")
+                    registry_data = []
+                
+                # Parse registry configurations
+                configs = []
+                for item in registry_data:
+                    if isinstance(item, dict):
+                        # Convert string paths to Path objects
+                        if "public_key" in item and item["public_key"]:
+                            item["public_key"] = Path(item["public_key"])
+                        configs.append(CosignRegistryConfig(**item))
+                
+                self.registry_configs = configs
+                logger.info(f"Loaded {len(configs)} registry configs from {config_file_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to load cosign config from {config_file_path}: {e}")
+        else:
+            # Fall back to default configuration
+            logger.info("Using default cosign registry configuration")
+            self.registry_configs = [
+                CosignRegistryConfig(
+                    registry="*",
+                    require_signature=True,
+                    verification_method="key",
+                    public_key=Path("/root/.cosign/cosign.pub")
+                )
+            ]
+    
+    def get_registry_config(self, registry: str) -> Optional[CosignRegistryConfig]:
+        """Get cosign configuration for a specific registry."""
+        # First try exact matches
+        for config in self.registry_configs:
+            if config.registry == registry:
+                return config
+        
+        # Then try pattern matches (simple wildcard support)
+        for config in self.registry_configs:
+            if self._matches_pattern(registry, config.registry):
+                return config
+        
+        # Finally, look for wildcard default
+        for config in self.registry_configs:
+            if config.registry == "*":
+                return config
+        
+        return None
+    
+    def _matches_pattern(self, registry: str, pattern: str) -> bool:
+        """Simple pattern matching for registry names."""
+        if pattern == "*":
+            return True
+        
+        if "*" in pattern:
+            # Simple wildcard matching
+            if pattern.endswith("/*"):
+                prefix = pattern[:-2]
+                return registry.startswith(prefix)
+            elif pattern.startswith("*/"):
+                suffix = pattern[2:]
+                return registry.endswith(suffix)
+        
+        return registry == pattern
 
 
 # For backward compatibility and convenience
