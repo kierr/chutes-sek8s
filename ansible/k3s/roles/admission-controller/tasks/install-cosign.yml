@@ -1,6 +1,6 @@
 ---
 - name: Install cosign
-  tasks:
+  block:
     - name: Update apt package index
       ansible.builtin.apt:
         update_cache: yes
@@ -26,18 +26,3 @@
     - name: Display cosign version
       ansible.builtin.debug:
         msg: "{{ cosign_version.stdout }}"
-
-- name: Setup cosign for parachutes
-  tasks:
-    - name: Ensure cosign directory exists
-      ansible.builtin.file:
-        path: /root/.cosign
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Setup public key
-      ansible.builtin.copy:
-        src: "{{ cosign_public_key_path }}"
-        dest: /root/.cosign/cosign.pub
