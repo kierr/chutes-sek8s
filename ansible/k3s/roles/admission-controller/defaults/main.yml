@@ -25,4 +25,9 @@ allowed_registries:
   - docker.io
   - gcr.io
   - quay.io
-  - localhost:30500
+  - registry.k8s.io
+  - rancher
+  - nvcr.io
+  - parachutes
+  - bitnami
+  - 5Dt7HZ7Zpw4DppPxFM7Ke3Cm7sDAWhsZXmM5ZAmE7dSVJbcQ.localregistry.chutes.ai:30500
