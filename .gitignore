@@ -7,3 +7,6 @@
 **/*.log
 .idea
 bin/
+
+tests/integration/keys
+tests/integration/test-data

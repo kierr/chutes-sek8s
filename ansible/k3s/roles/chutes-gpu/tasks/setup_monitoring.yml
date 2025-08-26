@@ -23,7 +23,7 @@
     - name: Install Prometheus
       shell: |
         helm upgrade --install prometheus prometheus-community/prometheus \
-          --namespace chutes \
+          --namespace monitoring \
           --create-namespace \
           --set server.persistentVolume.enabled=false \
           --set alertmanager.persistentVolume.enabled=false \

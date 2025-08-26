@@ -1,0 +1,10 @@
+- name: Configure cosign
+  block:
+    - name: Apply registry configuration
+      ansible.builtin.copy:
+        src: cosign-registries.json
+        dest: /etc/admission-controller/cosign-registries.json
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart admission-controller

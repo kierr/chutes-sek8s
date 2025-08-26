@@ -1,5 +1,39 @@
 services:
 
+  # Local Docker registry for testing
+  registry:
+    image: registry:2.8
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: true
+      REGISTRY_HTTP_ADDR: 0.0.0.0:5000
+    volumes:
+      - registry_data:/var/lib/registry
+    networks:
+      - test-network
+    profiles:
+      - test
+
+  # OPA server for integration testing
+  opa:
+    image: openpolicyagent/opa:latest-envoy
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=debug"
+      - "/policies"
+    volumes:
+      - ./ansible/k3s/roles/admission-controller/files/policies:/policies:ro
+    networks:
+      - test-network
+    profiles:
+      - test
+
   shell:
     volumes:
     - "../:/app"
@@ -45,3 +79,6 @@ services:
       file: docker-compose.base.yaml
       service: base
     entrypoint: ["/app/scripts/test.sh"]
+    
+volumes:
+  registry_data:

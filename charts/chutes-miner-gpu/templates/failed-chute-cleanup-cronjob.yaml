@@ -30,4 +30,6 @@ spec:
                   kubectl delete svc ${svc} -n chutes;
                 fi
               done
+            resources:
+            {{- toYaml .Values.failedChuteCleanup.resources | nindent 14 }}
           restartPolicy: OnFailure

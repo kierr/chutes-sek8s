@@ -13,7 +13,10 @@ spec:
       resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
       scope: "Cluster"
   validations:
-  - expression: "!(request.operation in ['CREATE', 'UPDATE', 'DELETE'])"
+  - expression: |
+      'system:masters' in request.userInfo.groups || 
+      request.userInfo.username == 'system:k3s-supervisor' ||
+      has(request.userInfo.username) && request.userInfo.username.startsWith('system:serviceaccount:kube-system:')
     message: "VWC actions are forbidden"
 
 ---
