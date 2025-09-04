@@ -1,0 +1,224 @@
+---
+- name: Load nbd kernel module
+  ansible.builtin.command: modprobe nbd max_part=8
+  args:
+    creates: /dev/nbd0
+  register: modprobe_result
+  changed_when: modprobe_result.rc == 0
+
+- name: Connect qcow2 image to nbd device
+  ansible.builtin.command: qemu-nbd --connect={{ nbd_device }} {{ final_img_path }}
+  args:
+    creates: "{{ nbd_device }}p1"
+  register: qemu_nbd_result
+  changed_when: qemu_nbd_result.rc == 0
+
+- name: Run partprobe to detect partitions
+  ansible.builtin.command: partprobe {{ nbd_device }}
+  changed_when: false
+
+- name: Create mount points
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ root_mount }}"
+    - "{{ backup_dir }}"
+    - "{{ newroot_mount }}"
+
+- name: Mount root partition
+  ansible.builtin.mount:
+    path: "{{ root_mount }}"
+    src: "{{ root_partition }}"
+    fstype: ext4
+    state: mounted
+
+- name: Mount boot partition
+  ansible.builtin.mount:
+    path: "{{ root_mount }}/boot"
+    src: "{{ boot_partition }}"
+    fstype: ext4
+    state: mounted
+
+- name: Mount EFI partition
+  ansible.builtin.mount:
+    path: "{{ root_mount }}/boot/efi"
+    src: "{{ efi_partition }}"
+    fstype: vfat
+    state: mounted
+
+- name: Backup root filesystem
+  ansible.builtin.command: rsync -aAXv {{ root_mount }}/ {{ backup_dir }}/
+  args:
+    creates: "{{ backup_dir }}/etc"
+  register: rsync_backup_result
+  changed_when: rsync_backup_result.rc == 0
+
+- name: Unmount partitions
+  ansible.builtin.mount:
+    path: "{{ item }}"
+    state: unmounted
+  loop:
+    - "{{ root_mount }}/boot/efi"
+    - "{{ root_mount }}/boot"
+    - "{{ root_mount }}"
+
+- name: Create LUKS keyfile
+  ansible.builtin.copy:
+    content: "{{ luks_passphrase | mandatory }}"
+    dest: /tmp/luks_keyfile
+    mode: '0600'
+    owner: root
+    group: root
+
+- name: Wipe existing ext4 superblock
+  ansible.builtin.command: wipefs -a {{ root_partition }}
+  args:
+    creates: /dev/mapper/{{ encrypted_root_name }}
+  register: wipefs_result
+  changed_when: wipefs_result.rc == 0
+  failed_when: wipefs_result.rc != 0
+
+- name: Format partition with LUKS
+  ansible.builtin.command: cryptsetup luksFormat {{ root_partition }} /tmp/luks_keyfile
+  args:
+    creates: /dev/mapper/{{ encrypted_root_name }}
+  register: luks_format_result
+  changed_when: luks_format_result.rc == 0
+  failed_when: luks_format_result.rc != 0
+
+- name: Open LUKS partition
+  ansible.builtin.command: cryptsetup luksOpen {{ root_partition }} {{ encrypted_root_name }} --key-file /tmp/luks_keyfile
+  args:
+    creates: /dev/mapper/{{ encrypted_root_name }}
+  register: luks_open_result
+  changed_when: luks_open_result.rc == 0
+  failed_when: luks_open_result.rc != 0
+
+- name: Remove LUKS keyfile
+  ansible.builtin.file:
+    path: /tmp/luks_keyfile
+    state: absent
+
+- name: Mount encrypted root
+  ansible.builtin.mount:
+    path: "{{ newroot_mount }}"
+    src: /dev/mapper/{{ encrypted_root_name }}
+    fstype: ext4
+    state: mounted
+
+- name: Restore data to encrypted root
+  ansible.builtin.command: rsync -aAXv {{ backup_dir }}/ {{ newroot_mount }}/
+  args:
+    creates: "{{ newroot_mount }}/etc"
+  register: rsync_restore_result
+  changed_when: rsync_restore_result.rc == 0
+
+- name: Mount boot partition to new root
+  ansible.builtin.mount:
+    path: "{{ newroot_mount }}/boot"
+    src: "{{ boot_partition }}"
+    fstype: ext4
+    state: mounted
+
+- name: Mount EFI partition to new root
+  ansible.builtin.mount:
+    path: "{{ newroot_mount }}/boot/efi"
+    src: "{{ efi_partition }}"
+    fstype: vfat
+    state: mounted
+
+- name: Bind mount system directories
+  ansible.builtin.mount:
+    path: "{{ newroot_mount }}/{{ item }}"
+    src: /{{ item }}
+    fstype: none
+    opts: bind
+    state: mounted
+  loop:
+    - proc
+    - sys
+    - dev
+    - run
+
+- name: Chroot and install cryptsetup
+  ansible.builtin.shell: |
+    chroot {{ newroot_mount }} /bin/bash -c "
+      apt-get update &&
+      apt-get install -y cryptsetup
+    "
+  register: chroot_install_result
+  changed_when: chroot_install_result.rc == 0
+
+- name: Get UUID of LUKS partition
+  ansible.builtin.command: blkid -o value -s UUID {{ root_partition }}
+  register: blkid_result
+  changed_when: false
+
+- name: Update /etc/crypttab
+  ansible.builtin.lineinfile:
+    path: "{{ newroot_mount }}/etc/crypttab"
+    line: "{{ encrypted_root_name }} UUID={{ blkid_result.stdout }} none luks,discard"
+    create: yes
+    mode: '0644'
+
+- name: Update /etc/fstab
+  ansible.builtin.replace:
+    path: "{{ newroot_mount }}/etc/fstab"
+    regexp: '^LABEL=cloudimg-rootfs\s+/(\s+ext4\s+.*)$'
+    replace: '/dev/mapper/{{ encrypted_root_name }}\t/\text4\t\1'
+    backup: yes
+
+- name: Copy fetch_key hooks
+  ansible.builtin.copy:
+    src: files/initramfs/fetch_key
+    dest: /etc/initramfs-tools/hooks/fetch_key
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Copy fetch_key hooks
+  ansible.builtin.copy:
+    src: files/initramfs/fetch_key_and_unlock
+    dest: /etc/initramfs-tools/scripts/init-premount/fetch_key_and_unlock
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Update initramfs and grub in chroot
+  ansible.builtin.shell: |
+    chroot {{ newroot_mount }} /bin/bash -c "
+      update-initramfs -u -k all &&
+      update-grub
+    "
+  register: chroot_update_result
+  changed_when: chroot_update_result.rc == 0
+
+- name: Unmount system directories
+  ansible.builtin.mount:
+    path: "{{ newroot_mount }}/{{ item }}"
+    state: unmounted
+  loop:
+    - sys/firmware/efi/efivars
+    - proc
+    - sys
+    - dev
+    - run
+    - boot/efi
+    - boot
+    - ""
+
+- name: Close LUKS partition
+  ansible.builtin.command: cryptsetup luksClose {{ encrypted_root_name }}
+  args:
+    removes: /dev/mapper/{{ encrypted_root_name }}
+  register: luks_close_result
+  changed_when: luks_close_result.rc == 0
+
+- name: Disconnect nbd device
+  ansible.builtin.command: qemu-nbd --disconnect {{ nbd_device }}
+  args:
+    removes: "{{ nbd_device }}"
+  register: qemu_nbd_disconnect_result
+  changed_when: qemu_nbd_disconnect_result.rc == 0
