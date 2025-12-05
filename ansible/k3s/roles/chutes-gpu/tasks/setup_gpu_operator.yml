@@ -1,0 +1,18 @@
+---
+- name: Add NVIDIA Helm repository
+  kubernetes.core.helm_repository:
+    name: nvidia
+    repo_url: https://helm.ngc.nvidia.com/nvidia
+
+- name: Install GPU Operator
+  ansible.builtin.command: >
+    helm upgrade --install gpu-operator nvidia/gpu-operator
+    --namespace gpu-operator
+    --version v24.9.2
+    --set driver.enabled=false
+    --set toolkit.enabled=false
+    --set operator.upgradeCRD=false
+    --create-namespace
+    --kubeconfig=/etc/rancher/k3s/k3s.yaml
+  register: helm_result
+  changed_when: helm_result.rc == 0

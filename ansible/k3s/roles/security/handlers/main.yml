@@ -1,0 +1,8 @@
+---
+- name: reload sysctl
+  command: sysctl --system
+
+- name: reload apparmor
+  systemd:
+    name: apparmor
+    state: reloaded

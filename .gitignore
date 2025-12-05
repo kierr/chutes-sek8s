@@ -1,3 +1,15 @@
 .coverage
 .venv
 **/__pycache__/*
+
+**/local/*
+**/image/*.qcow2
+**/*.log
+.idea
+bin/
+
+tests/integration/keys
+tests/integration/test-data
+host-tools/scripts/config.yaml
+measure
+**/*.qcow2

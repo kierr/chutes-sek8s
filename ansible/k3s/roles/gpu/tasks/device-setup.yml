@@ -1,0 +1,295 @@
+---
+- name: Check CUDA
+  tags:
+    - gpu-device-setup
+  block:
+    - name: Check CUDA installation
+      ansible.builtin.apt:
+        name: cuda-toolkit-{{ cuda_version }}
+        state: present
+      check_mode: true
+      register: cuda_check
+      ignore_errors: true
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_SUSPEND: "y"
+
+    - name: Get list of installed CUDA/NVIDIA packages
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          dpkg --list | egrep -i 'cuda|nvidia' | grep -v 'linux-nvidia' | awk '{print $2}' || true
+        executable: /bin/bash
+      register: nvidia_packages
+      changed_when: false
+
+    - name: Check whether target NVIDIA driver package is already installed
+      ansible.builtin.shell:
+        cmd: |
+          if dpkg -s nvidia-driver-{{ nvidia_version }}-open >/dev/null 2>&1; then
+            echo installed
+          else
+            echo missing
+          fi
+        executable: /bin/bash
+      register: target_driver_installed
+      changed_when: false
+
+    - name: Remove old CUDA/NVIDIA packages
+      ansible.builtin.apt:
+        name: "{{ nvidia_packages.stdout_lines }}"
+        state: absent
+        allow_change_held_packages: true
+      when:
+        - manage_nvidia_drivers | default(true) | bool
+        - not skip_cuda | bool
+        - target_driver_installed.stdout == 'missing'
+        - nvidia_packages.stdout_lines | length > 0
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_SUSPEND: "y"
+
+    - name: Purge old CUDA/NVIDIA packages
+      ansible.builtin.command: dpkg --purge {{ item }}
+      loop: "{{ nvidia_packages.stdout_lines }}"
+      when:
+        - manage_nvidia_drivers | default(true) | bool
+        - not skip_cuda | bool
+        - target_driver_installed.stdout == 'missing'
+        - nvidia_packages.stdout_lines | length > 0
+      failed_when: false
+      changed_when: true
+
+    # Adding this help mitigate lock conflicts when installing cuda keyring
+    - name: Package environment cleanup
+      block:
+        - name: Check what's holding the dpkg lock
+          shell: lsof /var/lib/dpkg/lock* 2>/dev/null || echo "No active locks"
+          register: lock_holders
+          changed_when: false
+
+        - name: Display lock holders
+          debug:
+            var: lock_holders.stdout_lines
+
+        - name: Wait for any existing package operations to complete
+          shell: |
+            timeout=300  # 5 minutes
+            while [ $timeout -gt 0 ] && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+              echo "Waiting for package lock to be released... ($timeout seconds remaining)"
+              sleep 10
+              timeout=$((timeout - 10))
+            done
+            if [ $timeout -le 0 ]; then
+              echo "Timeout waiting for package lock"
+              exit 1
+            fi
+          changed_when: false
+
+    - name: Download and install CUDA keyring
+      block:
+        - name: Download keyring
+          ansible.builtin.get_url:
+            url: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu{{ ubuntu_major }}{{ ubuntu_minor }}/x86_64/cuda-keyring_1.1-1_all.deb
+            dest: /tmp/cuda-keyring.deb
+            mode: "0644"
+            owner: root
+            group: root
+
+        - name: Install keyring
+          ansible.builtin.apt:
+            deb: /tmp/cuda-keyring.deb
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: GPU Setup Tasks
+      when:
+        - manage_nvidia_drivers | default(true) | bool
+        - not skip_cuda | bool
+        - target_driver_installed.stdout == 'missing'
+      block:
+        - name: Stop NVIDIA services before upgrade (if present)
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            enabled: false
+          loop:
+            - nvidia-persistenced
+            - nvidia-fabricmanager
+          failed_when: false
+
+        - name: Install CUDA toolkit
+          ansible.builtin.apt:
+            name: cuda-toolkit-{{ cuda_version }}
+            state: present
+
+        - name: Install NVIDIA {{ nvidia_version }} driver packages
+          ansible.builtin.apt:
+            name:
+              - libnvidia-cfg1-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-common-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-compute-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-decode-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-encode-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-extra-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-fbc1-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-gl-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - libnvidia-gpucomp-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-dkms-{{ nvidia_version }}-open={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-driver-{{ nvidia_version }}-open={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-firmware-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-kernel-common-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-kernel-source-{{ nvidia_version }}-open={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-modprobe={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-open-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-persistenced={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - nvidia-settings={{ nvidia_version }}.{{ nvidia_pkg_release }}
+              - xserver-xorg-video-nvidia-{{ nvidia_version }}={{ nvidia_version }}.{{ nvidia_pkg_release }}
+            state: present
+          register: driver_install
+          changed_when: driver_install.changed
+
+        - name: Download Fabric Manager {{ nvidia_version }}
+          ansible.builtin.get_url:
+            url: "http://archive.ubuntu.com/ubuntu/pool/multiverse/f/fabric-manager-{{ nvidia_version }}/nvidia-fabricmanager-{{ nvidia_version }}_{{ nvidia_version }}.{{ nvidia_pkg_release }}_amd64.deb"
+            dest: "/tmp/nvidia-fabricmanager-{{ nvidia_version }}.{{ nvidia_pkg_release }}.deb"
+            mode: "0644"
+
+        - name: Install Fabric Manager {{ nvidia_version }}
+          ansible.builtin.apt:
+            deb: "/tmp/nvidia-fabricmanager-{{ nvidia_version }}.{{ nvidia_pkg_release }}.deb"
+
+        - name: Install NVIDIA Container Toolkit
+          ansible.builtin.apt:
+            name: nvidia-container-toolkit
+            state: present
+            update_cache: true
+
+        - name: Configure NVIDIA Fabric Manager
+          ansible.builtin.systemd:
+            name: nvidia-fabricmanager
+            enabled: true
+            masked: false
+
+        - name: Ensure nvidia-persistenced override dir exists (only if missing)
+          ansible.builtin.stat:
+            path: /etc/systemd/system/nvidia-persistenced.service.d/override.conf
+          register: persistenced_override
+
+        - name: Ensure nvidia-persistenced override directory is present
+          ansible.builtin.file:
+            path: /etc/systemd/system/nvidia-persistenced.service.d
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Deploy nvidia-persistenced override for UVM persistence (create only if missing)
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/nvidia-persistenced.service.d/override.conf
+            content: |
+              [Service]
+              ExecStart=
+              ExecStart=/usr/bin/nvidia-persistenced --uvm-persistence-mode --verbose
+            owner: root
+            group: root
+            mode: '0644'
+          when: not persistenced_override.stat.exists
+
+        - name: Reload systemd units after NVIDIA service override
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when:
+            - driver_install is defined and driver_install.changed or not persistenced_override.stat.exists
+
+        - name: Enable nvidia-persistenced for next boot (only if manage_nvidia_drivers)
+          ansible.builtin.systemd:
+            name: nvidia-persistenced
+            enabled: true
+            state: stopped
+
+        - name: Reboot if driver install updated kernel modules and reboot is requested
+          ansible.builtin.reboot:
+            reboot_timeout: 600
+          when:
+            - driver_install is defined
+            - driver_install.changed
+            - reboot_on_driver_upgrade | default(false) | bool
+
+    - name: Configure file limits
+      ansible.builtin.blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+          * soft nofile 40000
+          * hard nofile 40001
+
+    - name: Configure PAM limits
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        line: "session required pam_limits.so"
+      with_items:
+        - /etc/pam.d/common-session
+        - /etc/pam.d/common-session-noninteractive
+
+- name: Blacklist nvidia-drm module
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-nvidia-drm.conf
+    content: |
+      # Blacklist nvidia-drm for compute-only GPUs
+      blacklist nvidia-drm
+    mode: '0644'
+    owner: root
+    group: root
+  notify: update initramfs
+  register: nvidia_drm_blacklist
+  when: blacklist_nvidia_drm | default(false) | bool
+
+- name: Add NVIDIA LKCA preload drop-in
+  block:
+    - name: Check for existing nvidia-lkca.conf
+      ansible.builtin.stat:
+        path: /etc/modprobe.d/nvidia-lkca.conf
+      register: nvidia_lkca_stat
+
+    - name: Add NVIDIA LKCA preload drop-in (only if missing)
+      copy:
+        dest: /etc/modprobe.d/nvidia-lkca.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Ensures ECDSA/ECDH crypto modules load before nvidia.ko
+          install nvidia /sbin/modprobe ecdsa_generic; /sbin/modprobe ecdh; /sbin/modprobe --ignore-install nvidia
+      notify: update initramfs
+      when: not nvidia_lkca_stat.stat.exists
+  
+- name: Add nvidia-tdx systemd unit
+  block:
+    - name: Ensure nvidia-tdx.service is present
+      ansible.builtin.copy:
+        dest: /lib/systemd/system/nvidia-tdx.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=TDX GPU setup
+          After=nvidia-persistenced.service
+
+          [Service]
+          ExecStart=nvidia-smi conf-compute -srs 1
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable nvidia-tdx service for first-boot (do not start now)
+      ansible.builtin.systemd:
+        name: nvidia-tdx
+        enabled: true
+        state: stopped

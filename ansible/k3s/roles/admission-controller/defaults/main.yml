@@ -1,0 +1,35 @@
+# ansible/k3s/roles/admission-controller/defaults/main.yml
+
+# Git repository settings
+admission_controller_repo: "https://github.com/rayonlabs/sek8s.git"
+admission_controller_version: "admission-controller"
+update_repository: true
+update_dependencies: false
+
+# OPA settings
+opa_version: "0.68.0"
+opa_log_level: "info"
+opa_decision_logs: false
+
+# Admission controller settings
+admission_bind_address: "127.0.0.1"
+admission_port: 8443
+enforcement_mode: "enforce"
+cache_enabled: true
+cache_ttl: 300
+debug_mode: false
+metrics_enabled: true
+# Chutes config
+validator: 5Dt7HZ7Zpw4DppPxFM7Ke3Cm7sDAWhsZXmM5ZAmE7dSVJbcQ
+
+# Registry allowlist
+allowed_registries:
+  - docker.io
+  - gcr.io
+  - quay.io
+  - registry.k8s.io
+  - rancher
+  - nvcr.io
+  - parachutes
+  - bitnami
+  - "{{ validator }}.localregistry.chutes.ai:30500"

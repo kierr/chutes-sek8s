@@ -1,0 +1,69 @@
+---
+# Common variables for all hosts
+
+# System configuration
+ansible_port: 22
+ansible_ssh_common_args: -o StrictHostKeyChecking=no
+timezone: UTC
+swap_disable: true
+
+# System packages to install
+system_packages:
+  - curl
+  - wget
+  - vim
+  - iproute2
+  - socat
+  - conntrack
+  - ipset
+  - jq
+  - apt-transport-https
+  - ca-certificates
+  - gnupg-agent
+  - software-properties-common
+
+# Networking configuration (used by all)
+k3s_api_port: "6443"
+cluster_cidr: 10.42.0.0/16
+service_cidr: 10.43.0.0/16
+
+# K3s Configuration
+k3s_version: v1.33.1+k3s1
+
+# Ubuntu major/minor version.
+ubuntu_major: "24"
+ubuntu_minor: "04"
+# CUDA version - leave as-is unless using h200s, in which case either use 12-5 or skip_cuda: true (if provider already pre-installed drivers)
+cuda_version: "13-0"
+# NVIDA GPU drivers - leave as-is unless using h200s, in which case it would be 555
+nvidia_version: "580"
+# NVIDIA package release suffix (minor.patch-release). This is appended to the
+# major `nvidia_version` to form full package versions like
+# "580.82.07-0ubuntu1". Keep this in sync with the package repository.
+nvidia_pkg_release: "82.07-0ubuntu1"
+# Flag to skip the cuda install entirely, if the provider already has cuda 12.x+ installed (note some chutes will not work unless 12.6+)
+skip_cuda: false
+# Flag to enable/disable IPv6. Some hosts may require IPv6 to be on.
+ipv6_enabled: true
+
+# Module Security Configuration
+enable_module_security: true
+enable_module_signing: true
+
+# Attestation settings
+attestation_endpoint: "{{ lookup('env', 'ATTESTATION_ENDPOINT') | default('https://api.example.com/attestation', true) }}"
+attestation_interval: 300  # 5 minutes
+
+# Module monitoring
+module_monitoring_enabled: true
+alert_on_unsigned_modules: true
+alert_on_tainted_kernel: true
+
+# Critical modules that must always be present
+critical_kernel_modules:
+  - overlay
+  - br_netfilter
+  - nf_conntrack
+  - iptable_nat
+  - iptable_filter
+  - ip_tables

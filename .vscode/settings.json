@@ -1,13 +1,22 @@
 {
     "python.defaultInterpreterPath": ".venv/bin/python",
-    "python.testing.unittestArgs": [
+    "python.testing.pytestArgs": [
         "-v",
-        "tests/**/test_*.py"
+        "tests",
+        "--ignore=submodules"
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.terminal.activateEnvironment": true,
     "python.analysis.exclude": [
         "**/.venv/*"
-    ]
+    ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "nvevidence": true
+    }
 }
