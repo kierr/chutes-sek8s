@@ -292,7 +292,7 @@ HOST_CMDLINE=$(cat /proc/cmdline 2>/dev/null || echo "")
 # Check for kvm_intel.tdx=on
 if ! echo "$HOST_CMDLINE" | grep -q "kvm_intel.tdx=1"; then
   echo "✗ Error: Host kernel missing 'kvm_intel.tdx=1' parameter"
-  echo "  Add to /etc/default/grub: GRUB_CMDLINE_LINUX=\"... kvm_intel.tdx=on ...\""
+  echo "  Add to /etc/default/grub: GRUB_CMDLINE_LINUX=\"... kvm_intel.tdx=1 ...\""
   echo "  Then run: sudo update-grub && sudo reboot"
   exit 1
 fi
