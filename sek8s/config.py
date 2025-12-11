@@ -31,6 +31,7 @@ class ServerConfig(BaseSettings):
     bind_address: str = Field(default="127.0.0.1")
     port: int = Field(default=8443, ge=1, le=65535)
     uds_path: Optional[Path] = Field(default=None)
+    require_tls: bool = Field(default=True, alias="REQUIRE_TLS")
 
     # TLS configuration
     tls_cert_path: Optional[Path] = Field(default=None, alias="TLS_CERT_PATH")
@@ -47,6 +48,24 @@ class ServerConfig(BaseSettings):
         env_prefix="",
         extra='ignore'
     )
+
+    @field_validator("uds_path", mode="before")
+    @classmethod
+    def normalize_empty_uds(cls, v: Optional[str | Path]) -> Optional[Path | str]:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("tls_cert_path", "tls_key_path", "client_ca_path", mode="before")
+    @classmethod
+    def normalize_empty_tls(cls, v: Optional[str | Path]) -> Optional[str | Path]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            if not v.strip():
+                return None
+            return v
+        return v
 
     @field_validator("tls_cert_path", "tls_key_path", "client_ca_path", mode="after")
     @classmethod
@@ -67,6 +86,34 @@ class ServerConfig(BaseSettings):
 class AttestationServiceConfig(ServerConfig):
 
     hostname: str = os.getenv("HOSTNAME")
+
+    model_config = SettingsConfigDict(
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra='ignore'
+    )
+
+
+class SystemStatusConfig(ServerConfig):
+    """Configuration for the read-only system status service."""
+
+    require_tls: bool = Field(default=False, alias="REQUIRE_TLS")
+
+    max_output_bytes: int = Field(default=16_384, alias="MAX_OUTPUT_BYTES", ge=1024, le=1_000_000)
+    command_timeout_seconds: float = Field(
+        default=10.0,
+        alias="COMMAND_TIMEOUT_SECONDS",
+        gt=0.0,
+        le=60.0,
+    )
+    log_tail_default: int = Field(default=200, alias="LOG_TAIL_DEFAULT", ge=1, le=5000)
+    log_tail_max: int = Field(default=1000, alias="LOG_TAIL_MAX", ge=100, le=10_000)
+    log_window_max_minutes: int = Field(
+        default=1440,
+        alias="LOG_WINDOW_MAX_MINUTES",
+        ge=1,
+        le=7 * 24 * 60,
+    )
 
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",

@@ -125,6 +125,21 @@
         apply:
           tags: admission-controller
 
+- name: Setup system status service
+  hosts: vm
+  become: true
+  tags:
+    - system-status
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: System status
+      ansible.builtin.include_role:
+        name: system-status
+        apply:
+          tags: system-status
+
 - name: Setup cache volume service
   hosts: vm
   become: true
@@ -141,7 +156,7 @@
           tags: cache-volume
 
 - name: Add dyanmic config services
-  hosts: all
+  hosts: vm
   become: true
   any_errors_fatal: false
   tags:
