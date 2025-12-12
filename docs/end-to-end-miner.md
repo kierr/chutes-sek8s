@@ -172,11 +172,14 @@ The sek8s VM already contains the Chutes workloads. To make it part of your mine
 2. **Install `chutes-miner-cli`** (see the CLI README in the same repo) and authenticate it with your miner account.
 3. **Add the TEE VM to your inventory via CLI**, referencing the bridged IP/hostname you configured earlier. Example:
    ```bash
-   chutes-miner-cli nodes add \
-     --name tee-gpu-0 \
-     --type tee \
-     --public-ip <host_public_ip> \
-     --notes "sek8s Intel TDX VM"
+    chutes-miner add-node \
+    --name chutes-miner-tee-0 \
+    --validator 5Dt7HZ7Zpw4DppPxFM7Ke3Cm7sDAWhsZXmM5ZAmE7dSVJbcQ \
+    --hourly-cost 19.60 \
+    --hotkey $HOTKEY \
+    --miner-api $MINER_API \
+    --gpu-short-ref h200 \
+    --agent-api http://<NODE_IP>:32000
    ```
    Adjust flags to match your environment; the CLI command is authoritative for TEE nodes because there is no SSH session for Ansible to drive.
 4. **Reuse the same control node for TEE and non-TEE miners.** Policies, payout settings, and monitoring targets are shared; only the execution environment differs.
