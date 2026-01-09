@@ -9,8 +9,14 @@ case $1 in prereqs) prereqs; exit 0;; esac
 # Configuration
 [ -f /etc/tdx-luks.conf ] && . /etc/tdx-luks.conf
 
-API_ENDPOINT="${TDX_API_ENDPOINT:-https://tdx-attestation.chutes.ai/servers/boot/attestation}"
-NONCE_ENDPOINT="${TDX_NONCE_ENDPOINT:-https://api.chutes.ai/servers/nonce}"
+# Validate required configuration
+if [ -z "$TDX_API_ENDPOINT" ] || [ -z "$TDX_NONCE_ENDPOINT" ]; then
+    echo "ERROR: Missing required TDX configuration. Check /etc/tdx-luks.conf" >&2
+    exit 1
+fi
+
+API_ENDPOINT="$TDX_API_ENDPOINT"
+NONCE_ENDPOINT="$TDX_NONCE_ENDPOINT"
 DEVICE_PATH="${LUKS_DEVICE:-/dev/vda1}"
 LUKS_NAME="${LUKS_NAME:-encrypted_root}"
 TIMEOUT="${TDX_TIMEOUT:-30}"
@@ -19,8 +25,12 @@ CLIENT_CERT="/tmp/client_cert.pem"
 CLIENT_KEY="/tmp/client_key.pem"
 API_CA_CERT="/etc/ssl/certs/ca-certificates.crt"
 
-# Global variable for the retrieved key
+# Global variables
 LUKS_KEY=""
+BOOT_TOKEN=""
+VM_NAME=""
+HOTKEY=""
+SUCCESS_FLAG=0
 
 # Function to securely clear the LUKS key and temporary files
 clear_luks_key() {
@@ -32,8 +42,22 @@ clear_luks_key() {
         unset LUKS_KEY
     fi
     
+    if [ -n "$BOOT_TOKEN" ]; then
+        BOOT_TOKEN="$(head -c 1000 /dev/urandom 2>/dev/null | base64 | tr -d '\n' | head -c 1000)"
+        BOOT_TOKEN=""
+        unset BOOT_TOKEN
+    fi
+    
     # Clear any temporary files that might contain sensitive data
     rm -f "$CLIENT_CERT" "$CLIENT_KEY" /tmp/api_response /tmp/nonce_response
+    
+    # If script exits without success flag, shutdown the VM
+    if [ "$SUCCESS_FLAG" -ne 1 ]; then
+        log_failure_msg "TDX unlock failed - VM will shut down in 5 seconds..."
+        echo "TDX-LUKS-UNLOCK-FAILED" > /dev/kmsg
+        sleep 5
+        poweroff -f
+    fi
 }
 
 # Set up trap to ensure cleanup happens on ANY exit
@@ -79,34 +103,54 @@ generate_client_cert() {
     return 0
 }
 
-# Function to setup network from cloud-init config
-setup_network() {
+# Function to mount config volume
+mount_config_volume() {
     local cfg_mount="/run/tdx-config"
-
-    log_begin_msg "Setting up network from config volume"
-
+    
+    log_begin_msg "Mounting config volume"
+    
     mkdir -p "$cfg_mount"
-
+    
     # Load virtio drivers (for vdb/vdc attachment)
     modprobe virtio_blk 2>/dev/null
     modprobe virtio_pci 2>/dev/null
     sleep 1
-
+    
     # Mount ext4 config volume labeled "tdx-config"
     for device in /dev/disk/by-label/tdx-config; do
         if [ -b "$device" ]; then
             if mount -t ext4 -o ro "$device" "$cfg_mount" 2>/dev/null; then
-                break
+                log_success_msg "Config volume mounted at $cfg_mount"
+                return 0
             fi
         fi
     done
+    
+    log_failure_msg "Failed to mount config volume"
+    return 1
+}
 
-    if [ ! -f "$cfg_mount/network-config.yaml" ]; then
-        log_failure_msg "network-config.yaml not found on config volume"
+# Function to unmount config volume
+unmount_config_volume() {
+    local cfg_mount="/run/tdx-config"
+    
+    if grep -q "$cfg_mount" /proc/mounts 2>/dev/null; then
+        umount "$cfg_mount" 2>/dev/null || true
+        log_success_msg "Config volume unmounted"
+    fi
+}
+
+# Function to setup network from cloud-init config (assumes volume is already mounted)
+setup_network() {
+    local cfg_mount="/run/tdx-config"
+    local netconfig="$cfg_mount/network-config.yaml"
+
+    log_begin_msg "Setting up network from config"
+
+    if [ ! -f "$netconfig" ]; then
+        log_failure_msg "network-config.yaml not found"
         return 1
     fi
-
-    local netconfig="$cfg_mount/network-config.yaml"
 
     # Find the first en* interface (auto-detect instead of parsing from config)
     iface=$(ls /sys/class/net/ | grep '^en' | head -n1)
@@ -118,7 +162,6 @@ setup_network() {
 
     if [ -z "$iface" ] || [ -z "$ip_addr" ] || [ -z "$gateway" ]; then
         log_failure_msg "Failed to detect interface or parse network-config.yaml"
-        umount "$cfg_mount" 2>/dev/null || true
         return 1
     fi
 
@@ -128,7 +171,6 @@ setup_network() {
 
     if [ ! -e "/sys/class/net/$iface" ]; then
         log_failure_msg "Interface $iface not found"
-        umount "$cfg_mount" 2>/dev/null || true
         return 1
     fi
 
@@ -147,20 +189,64 @@ setup_network() {
     # Verify
     if ! ip addr show "$iface" | grep -q "inet "; then
         log_failure_msg "Failed to configure IP"
-        umount "$cfg_mount" 2>/dev/null || true
         return 1
     fi
 
     if ! ip route show | grep -q "default"; then
         log_failure_msg "Failed to configure default route"
-        umount "$cfg_mount" 2>/dev/null || true
         return 1
     fi
 
     log_success_msg "Network setup complete"
-
-    umount "$cfg_mount" 2>/dev/null || true
     return 0
+}
+
+# Function to read VM name from config volume (assumes volume is already mounted)
+read_vm_name() {
+    local cfg_mount="/run/tdx-config"
+    local hostname_file="$cfg_mount/hostname"
+    
+    log_begin_msg "Reading VM name from config"
+    
+    # Read hostname file (VM name is same as hostname)
+    if [ ! -f "$hostname_file" ]; then
+        log_failure_msg "VM name file not found: $hostname_file"
+        return 1
+    fi
+    
+    VM_NAME=$(cat "$hostname_file" 2>/dev/null | tr -d '\n\r\t ' | grep -o '^[[:alnum:]_-]*')
+    if [ -n "$VM_NAME" ]; then
+        log_success_msg "Found VM name: $VM_NAME"
+        return 0
+    else
+        log_failure_msg "VM name is empty or invalid in $hostname_file"
+        cat "$hostname_file" 2>/dev/null | od -c
+        return 1
+    fi
+}
+
+# Function to read hotkey from config volume (assumes volume is already mounted)
+read_hotkey() {
+    local cfg_mount="/run/tdx-config"
+    local hotkey_file="$cfg_mount/miner-ss58"
+    
+    log_begin_msg "Reading miner hotkey from config"
+    
+    # Read miner SS58 (hotkey)
+    if [ ! -f "$hotkey_file" ]; then
+        log_failure_msg "Miner hotkey file not found: $hotkey_file"
+        return 1
+    fi
+    
+    HOTKEY=$(cat "$hotkey_file" 2>/dev/null | tr -d '\n\r\t ' | head -c 64)
+    if [ -n "$HOTKEY" ]; then
+        log_success_msg "Found miner hotkey from config"
+        return 0
+    else
+        log_failure_msg "Miner hotkey is empty or invalid in $hotkey_file"
+        cat "$hotkey_file" 2>/dev/null | od -c
+        return 1
+    fi
 }
 
 # Function to fetch nonce from API
@@ -272,7 +358,8 @@ fetch_luks_key() {
             continue
         fi
         
-        # Make API request, use mTLS for API request
+        # Make API request with vm_name and miner_hotkey, use mTLS for API request
+        log_begin_msg "Sending attestation for VM '$VM_NAME' with miner_hotkey"
         http_code=$(curl -s -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
@@ -283,16 +370,17 @@ fetch_luks_key() {
             --cacert "$API_CA_CERT" \
             --cert "$CLIENT_CERT" \
             --key "$CLIENT_KEY" \
-            -d "{\"quote\":\"$QUOTE_B64\"}" \
+            -d "{\"quote\":\"$QUOTE_B64\",\"vm_name\":\"$VM_NAME\",\"miner_hotkey\":\"$HOTKEY\"}" \
             -o "$response_file" \
             "$API_ENDPOINT")
         
         case "$http_code" in
             200)
                 LUKS_KEY=$(grep -o '"key":"[^"]*"' "$response_file" | cut -d'"' -f4)
+                BOOT_TOKEN=$(grep -o '"boot_token":"[^"]*"' "$response_file" | cut -d'"' -f4)
                 if [ -n "$LUKS_KEY" ]; then
                     rm -f "$response_file"
-                    log_success_msg "LUKS key retrieved successfully"
+                    log_success_msg "LUKS key and boot token retrieved successfully"
                     return 0
                 else
                     log_failure_msg "API response missing key field"
@@ -345,6 +433,8 @@ unlock_device() {
     fi
 }
 
+
+
 # Function to handle failure and shutdown
 handle_failure() {
     local reason="$1"
@@ -379,10 +469,35 @@ main() {
         return 1
     fi
     
+    # Mount config volume once for all config reads
+    if ! mount_config_volume; then
+        handle_failure "Failed to mount config volume"
+        return 1
+    fi
+    
+    # Setup network (reads from mounted config volume)
     if ! setup_network; then
+        unmount_config_volume
         handle_failure "Network setup failed"
         return 1
     fi
+    
+    # Read VM name from config volume
+    if ! read_vm_name; then
+        unmount_config_volume
+        handle_failure "Failed to read VM name from config volume"
+        return 1
+    fi
+    
+    # Read hotkey from config volume
+    if ! read_hotkey; then
+        unmount_config_volume
+        handle_failure "Failed to read miner hotkey from config volume"
+        return 1
+    fi
+    
+    # Unmount config volume now that we have all the data
+    unmount_config_volume
     
     # Fetch LUKS key from API (nonce and quote generated per attempt)
     if ! fetch_luks_key; then
@@ -398,6 +513,17 @@ main() {
     
     # Unlock the device
     if unlock_device; then
+        # Save vm_name, hotkey, and boot token to /run for containerd cache setup
+        mkdir -p /run/chutes
+        echo "$VM_NAME" > /run/chutes/vm-name
+        echo "$HOTKEY" > /run/chutes/hotkey
+        if [ -n "$BOOT_TOKEN" ]; then
+            echo "$BOOT_TOKEN" > /run/chutes/boot-token
+        fi
+        
+        # Mark as successful before cleanup
+        SUCCESS_FLAG=1
+        
         # Clear key from memory immediately after successful unlock
         clear_luks_key
         log_success_msg "TDX-based unlock completed successfully"
