@@ -23,12 +23,6 @@ process_name = 'chutes-td'
 
 ubuntu_version = platform.freedesktop_os_release().get('VERSION_ID')
 
-# Default guest image
-if os.environ.get('TD_IMG'):
-    td_img = os.environ.get('TD_IMG')
-else:
-    td_img = f'{file_path}/../../guest-tools/image/tdx-guest.qcow2'
-
 # TDVF MUST NOT be overridden (MRTD depends on it)
 firmware = '../../firmware/TDVF.fd'
 
@@ -283,7 +277,11 @@ def run_td(args):
     if args.clean:
         return
 
-    img = args.image if args.image else td_img
+    if not args.image:
+        print("Error: --image is required")
+        sys.exit(1)
+
+    img = args.image
 
     do_run(
         img_path=img,
@@ -301,7 +299,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Canonical args
-    parser.add_argument("--image", type=str)
+    parser.add_argument("--image", type=str, required=True, help="Path to VM image (required)")
     parser.add_argument("--pass-gpus", action='store_true')
     parser.add_argument("--foreground", action='store_true')
     parser.add_argument("--clean", action='store_true')

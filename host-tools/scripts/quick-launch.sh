@@ -129,7 +129,7 @@ Config File:
 
 Command Line Options (CLI overrides YAML when provided):
   --hostname NAME           VM hostname (required if not in YAML)
-  --image PATH              Path to VM image (overrides YAML and CHUTES_IMAGE env)
+  --image PATH              Path to VM image (required from CLI or config file)
   --miner-ss58 VALUE        Miner SS58 credential (required)
   --miner-seed VALUE        Miner seed credential (required)
 
@@ -249,9 +249,10 @@ fi
 # --------------------------------------------------------------------
 # Validate required parameters (must come from YAML or CLI)
 # --------------------------------------------------------------------
-if [[ -z "$HOSTNAME" || -z "$MINER_SS58" || -z "$MINER_SEED" ]]; then
+if [[ -z "$HOSTNAME" || -z "$VM_IMAGE" || -z "$MINER_SS58" || -z "$MINER_SEED" ]]; then
   echo "Error: Missing required configuration:"
   [[ -z "$HOSTNAME" ]] && echo "  - hostname (vm.hostname or --hostname)"
+  [[ -z "$VM_IMAGE" ]] && echo "  - image (vm.image in config file - required)"
   [[ -z "$MINER_SS58" ]] && echo "  - miner.ss58 (miner.ss58 or --miner-ss58)"
   [[ -z "$MINER_SEED" ]] && echo "  - miner.seed (miner.seed or --miner-seed)"
   echo ""
@@ -275,7 +276,7 @@ echo ""
 echo "=== TEE VM Orchestration ==="
 echo "Config source: ${CONFIG_FILE:-command line only}"
 echo "Hostname: $HOSTNAME"
-echo "Image: ${VM_IMAGE:-<from CHUTES_IMAGE env or run-td default>}"
+echo "Image: $VM_IMAGE"
 echo "VM IP: $VM_IP"
 echo "Bridge IP: $BRIDGE_IP"
 echo "Cache volume: $CACHE_VOLUME ($CACHE_SIZE)"
@@ -444,14 +445,10 @@ echo "Launching Chutes VM..."
 
 LAUNCH_ARGS=(
   --pass-gpus
+  --image "$VM_IMAGE"
   --config-volume "$CONFIG_VOLUME"
   --network-type "$NETWORK_TYPE"
 )
-
-# Add image if specified in config or CLI
-if [[ -n "$VM_IMAGE" ]]; then
-  LAUNCH_ARGS+=(--image "$VM_IMAGE")
-fi
 
 if [[ "$NETWORK_TYPE" == "tap" ]]; then
   LAUNCH_ARGS+=(--net-iface "$NET_IFACE")
