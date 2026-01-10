@@ -299,7 +299,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Canonical args
-    parser.add_argument("--image", type=str, required=True, help="Path to VM image (required)")
+    parser.add_argument("--image", type=str, help="Path to VM image")
     parser.add_argument("--pass-gpus", action='store_true')
     parser.add_argument("--foreground", action='store_true')
     parser.add_argument("--clean", action='store_true')
