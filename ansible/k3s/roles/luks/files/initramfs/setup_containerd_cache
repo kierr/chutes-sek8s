@@ -18,6 +18,7 @@ CONTAINERD_KEY=""
 VM_NAME=""
 HOTKEY=""
 BOOT_TOKEN=""
+SUCCESS_FLAG=0
 
 # Function to securely clear sensitive data
 clear_sensitive_data() {
@@ -34,6 +35,14 @@ clear_sensitive_data() {
     fi
     
     rm -f /tmp/containerd_response
+    
+    # If script exits without success flag, shutdown the VM
+    if [ "$SUCCESS_FLAG" -ne 1 ]; then
+        log_failure_msg "Containerd cache setup failed - VM will shut down in 10 seconds..."
+        echo "CONTAINERD-CACHE-SETUP-FAILED" > /dev/kmsg
+        sleep 10
+        poweroff -f
+    fi
 }
 
 trap clear_sensitive_data EXIT INT TERM
@@ -84,14 +93,15 @@ detect_containerd_device() {
         
         # Use blkid to find all block devices, then check each for LUKS with our label
         # This is more reliable than globbing /dev paths
-        while IFS= read -r dev; do
+        for dev in $(blkid -o device 2>/dev/null); do
             [ -b "$dev" ] || continue
             
             # Check if it's a LUKS device
             if cryptsetup isLuks "$dev" 2>/dev/null; then
-                # Check for our subsystem label (faster than luksDump)
-                luks_label=$(cryptsetup config "$dev" --label 2>/dev/null || \
-                           cryptsetup luksDump "$dev" 2>/dev/null | grep -i "^Label:" | sed 's/.*: *//')
+                # Extract label from LUKS header
+                luks_label=$(cryptsetup luksDump "$dev" 2>/dev/null | grep -E "^Label:" | sed 's/^Label:[[:space:]]*//')
+                
+                log_begin_msg "Checking device $dev: label='$luks_label'"
                 
                 if [ "$luks_label" = "$CONTAINERD_LABEL" ]; then
                     CONTAINERD_DEVICE="$dev"
@@ -99,9 +109,7 @@ detect_containerd_device() {
                     break
                 fi
             fi
-        done <<EOF
-$(blkid -o device)
-EOF
+        done
     fi
     
     if [ -z "$CONTAINERD_DEVICE" ]; then
@@ -298,29 +306,48 @@ setup_containerd_cache() {
     return 0
 }
 
+# Function to handle failure and shutdown
+handle_failure() {
+    local reason="$1"
+    
+    log_failure_msg "Containerd cache setup failed: $reason"
+    log_failure_msg "VM will shut down in 10 seconds..."
+    
+    # Log to kernel ring buffer for debugging
+    echo "CONTAINERD-CACHE-SETUP-FAILED: $reason" > /dev/kmsg
+    
+    # Clear sensitive data before shutdown
+    clear_sensitive_data
+    
+    # Give time to see the message
+    sleep 10
+    
+    # Power off the system
+    poweroff -f
+}
+
 # Main execution
 main() {
     # Load VM ID and boot token from /run
     if ! load_vm_data; then
-        log_failure_msg "CRITICAL: Cannot proceed without VM ID"
-        log_failure_msg "Containerd cache is required for operation"
+        handle_failure "Cannot proceed without VM ID"
         return 1
     fi
     
     # Detect containerd device
     if ! detect_containerd_device; then
-        log_failure_msg "CRITICAL: No containerd device found"
-        log_failure_msg "Containerd cache is required for operation"
+        handle_failure "No containerd device found"
         return 1
     fi
     
     # Setup (encrypt or unlock) containerd cache
     if ! setup_containerd_cache; then
-        log_failure_msg "CRITICAL: Failed to setup containerd cache"
-        log_failure_msg "Containerd cache is required for operation"
-        clear_sensitive_data
+        handle_failure "Failed to setup containerd cache"
         return 1
     fi
+    
+    # Mark as successful before cleanup
+    SUCCESS_FLAG=1
     
     # Clear all sensitive data
     clear_sensitive_data
