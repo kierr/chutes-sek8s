@@ -1,0 +1,29 @@
+[Unit]
+Description=VM storage
+Documentation=man:systemd.mount(5)
+After=local-fs-pre.target
+After=systemd-udev-settle.service
+# Must be mounted before bind mounts, containerd and k3s
+Before=setup-storage-bind-mounts.service
+Before=containerd.service
+Before=k3s.service
+Before=k3s-agent.service
+# If this mount fails, don't continue boot
+OnFailure=poweroff.target
+
+[Mount]
+{% if debug_build | default(false) %}
+# Debug mode: Use unencrypted device by label
+What=/dev/disk/by-label/storage
+{% else %}
+# Production mode: Use the mapped LUKS device (unlocked by initramfs)
+What=/dev/mapper/storage
+{% endif %}
+Where=/cache/storage
+Type=ext4
+Options=defaults,noatime
+# Don't allow boot to continue if mount fails
+TimeoutSec=30
+
+[Install]
+WantedBy=local-fs.target

@@ -24,6 +24,8 @@ MAX_CONSECUTIVE_FAILURES = 5
 # Port configuration
 EXTERNAL_PORT = int(os.getenv("EXTERNAL_PORT", "8443"))
 INTERNAL_PORT = int(os.getenv("INTERNAL_PORT", "8444"))
+# Dedicated port for chute proxy services (restricted via network policies)
+SERVICE_PORT = int(os.getenv("SERVICE_PORT", "8002"))
 
 
 class SharedProxyResources:
@@ -286,8 +288,8 @@ class BaseProxyServer(WebServer):
             if key.lower() not in ["host", "content-length"]:
                 headers[key] = value
         
-        # Build K8s service URL
-        service_url = f"http://{service_name}.{SERVICE_NAMESPACE}.{CLUSTER_DOMAIN}"
+        # Build K8s service URL with dedicated proxy port (8002)
+        service_url = f"http://{service_name}.{SERVICE_NAMESPACE}.{CLUSTER_DOMAIN}:{SERVICE_PORT}"
         
         return await self.proxy_request(
             target_url=service_url,
@@ -308,24 +310,6 @@ class ExternalProxyServer(BaseProxyServer):
     
     def _setup_routes(self):
         """Setup routes with validator authentication."""
-        
-        # Middleware to compute body SHA256 for signature verification
-        @self.app.middleware("http")
-        async def add_body_sha256(request: Request, call_next):
-            """Compute SHA256 of request body for signature verification"""
-            if request.method in ["POST", "PUT", "PATCH"]:
-                body = await request.body()
-                if body:
-                    import hashlib
-                    request.state.body_sha256 = hashlib.sha256(body).hexdigest()
-                else:
-                    request.state.body_sha256 = None
-            else:
-                request.state.body_sha256 = None
-            
-            response = await call_next(request)
-            return response
-        
         # Health check (no auth)
         self.app.add_api_route("/health", self.health_check, methods=["GET"])
         

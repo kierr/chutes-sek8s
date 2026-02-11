@@ -28,7 +28,7 @@
         owner: root
         group: root
 
-    - name: Copy cache volume verification script
+    - name: Copy cache volume verification script (post-mount encryption state)
       copy:
         src: "{{ files_dir }}/verify-cache-volume.sh"
         dest: /usr/local/bin/verify-cache-volume.sh
@@ -37,77 +37,130 @@
         group: root
       register: verify_script
 
-    - name: Copy verification service unit
-      copy:
-        src: "{{ files_dir }}/verify-cache-volume.service"
+    - name: Template verify cache volume service
+      template:
+        src: verify-cache-volume.service.j2
         dest: /etc/systemd/system/verify-cache-volume.service
         mode: '0644'
         owner: root
         group: root
       register: verify_service
 
-    - name: Copy mount unit
-      copy:
-        src: "{{ files_dir }}/var-snap.mount"
+    - name: Template var-snap mount unit
+      template:
+        src: var-snap.mount.j2
         dest: /etc/systemd/system/var-snap.mount
         mode: '0644'
         owner: root
         group: root
       register: var_snap_mount_unit
 
-    - name: Template containerd cache mount unit
+    - name: Template cache storage mount unit
       template:
-        src: var-lib-rancher-k3s-agent-containerd.mount.j2
-        dest: /etc/systemd/system/var-lib-rancher-k3s-agent-containerd.mount
+        src: cache-storage.mount.j2
+        dest: /etc/systemd/system/cache-storage.mount
         mode: '0644'
         owner: root
         group: root
-      register: var_lib_rancher_mount_unit
+      register: cache_storage_mount_unit
 
-    - name: Copy containerd cache init script
+    - name: Copy verify storage script
       copy:
-        src: "{{ files_dir }}/init-containerd-cache.sh"
-        dest: /usr/local/bin/init-containerd-cache.sh
+        src: "{{ files_dir }}/verify-storage.sh"
+        dest: /usr/local/bin/verify-storage.sh
         mode: '0755'
         owner: root
         group: root
-      register: containerd_init_script
+      register: verify_storage_script
 
-    - name: Template containerd cache init service
+    - name: Template verify storage service
       template:
-        src: containerd-cache-init.service.j2
-        dest: /etc/systemd/system/containerd-cache-init.service
+        src: verify-storage.service.j2
+        dest: /etc/systemd/system/verify-storage.service
         mode: '0644'
         owner: root
         group: root
-      register: containerd_init_service
+      register: verify_storage_service
 
-    - name: Copy Chutes agent symlink script
+    - name: Copy k3s storage init script
       copy:
-        src: "{{ files_dir }}/setup-chutes-agent-symlink.sh"
-        dest: /usr/local/bin/setup-chutes-agent-symlink.sh
+        src: "{{ files_dir }}/init-k3s-storage.sh"
+        dest: /usr/local/bin/init-k3s-storage.sh
         mode: '0755'
         owner: root
         group: root
-      register: chutes_agent_symlink_script
+      register: k3s_storage_init_script
 
-    - name: Copy Chutes agent symlink service
+    - name: Copy kubelet storage init script
       copy:
-        src: "{{ files_dir }}/setup-chutes-agent-symlink.service"
-        dest: /etc/systemd/system/setup-chutes-agent-symlink.service
+        src: "{{ files_dir }}/init-kubelet-storage.sh"
+        dest: /usr/local/bin/init-kubelet-storage.sh
+        mode: '0755'
+        owner: root
+        group: root
+      register: kubelet_storage_init_script
+
+    - name: Template storage init service
+      template:
+        src: storage-init.service.j2
+        dest: /etc/systemd/system/storage-init.service
         mode: '0644'
         owner: root
         group: root
-      register: chutes_agent_symlink_service
+      register: storage_init_service
+
+    - name: Copy cache setup script
+      copy:
+        src: "{{ files_dir }}/setup-cache.sh"
+        dest: /usr/local/bin/setup-cache.sh
+        mode: '0755'
+        owner: root
+        group: root
+      register: cache_script
+
+    - name: Copy cache setup service
+      copy:
+        src: "{{ files_dir }}/setup-cache.service"
+        dest: /etc/systemd/system/setup-cache.service
+        mode: '0644'
+        owner: root
+        group: root
+      register: cache_service
+
+    - name: Copy storage bind mounts setup script
+      copy:
+        src: "{{ files_dir }}/setup-storage-bind-mounts.sh"
+        dest: /usr/local/bin/setup-storage-bind-mounts.sh
+        mode: '0755'
+        owner: root
+        group: root
+      register: storage_bind_mounts_script
+
+    - name: Copy storage bind mounts service
+      copy:
+        src: "{{ files_dir }}/setup-storage-bind-mounts.service"
+        dest: /etc/systemd/system/setup-storage-bind-mounts.service
+        mode: '0644'
+        owner: root
+        group: root
+      register: storage_bind_mounts_service
 
     - name: Reload systemd daemon if units changed
       systemd:
         daemon_reload: yes
-      when: verify_service.changed or var_snap_mount_unit.changed or var_lib_rancher_mount_unit.changed or containerd_init_service.changed or chutes_agent_symlink_service.changed
+      when: verify_service.changed or var_snap_mount_unit.changed or cache_storage_mount_unit.changed or verify_storage_service.changed or storage_init_service.changed or cache_service.changed or storage_bind_mounts_service.changed
 
     - name: Create /var/snap mount point directory
       file:
         path: /var/snap
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Create /cache directory
+      file:
+        path: /cache
         state: directory
         mode: '0755'
         owner: root
@@ -121,9 +174,9 @@
         owner: root
         group: root
 
-    - name: Create Chutes agent directory on /var/snap
+    - name: Create kubelet parent directory
       file:
-        path: /var/snap/chutes-agent
+        path: /var/lib/kubelet
         state: directory
         mode: '0755'
         owner: root
@@ -137,7 +190,7 @@
         owner: root
         group: root
 
-    # Symlink script will handle agent target
+    # setup-cache.service sets /var/snap/cache permissions at boot; setup-storage-bind-mounts creates agent dir and bind mount on main storage
 
     - name: Enable verify-cache-volume.service (but do not start)
       systemd:
@@ -157,25 +210,42 @@
         daemon_reload: yes
       failed_when: false
 
-    - name: Enable containerd cache mount (but do not start)
+    - name: Enable cache storage mount (but do not start)
       systemd:
-        name: var-lib-rancher-k3s-agent-containerd.mount
+        name: cache-storage.mount
         enabled: yes
         state: stopped
         daemon_reload: yes
       failed_when: false
 
-    - name: Enable containerd cache init service (but do not start)
+    # Don't enable by default during multi-phase builds. Let cleanup/enable step enable it.
+    - name: Set verify storage service state (disabled during build)
       systemd:
-        name: containerd-cache-init.service
+        name: verify-storage.service
+        enabled: no
+        state: stopped
+        daemon_reload: yes
+      failed_when: false
+
+    - name: Enable storage init service (but do not start)
+      systemd:
+        name: storage-init.service
         enabled: yes
         state: stopped
         daemon_reload: yes
       failed_when: false
 
-    - name: Enable Chutes agent symlink service (but do not start)
+    - name: Enable cache setup service (but do not start)
       systemd:
-        name: setup-chutes-agent-symlink.service
+        name: setup-cache.service
+        enabled: yes
+        state: stopped
+        daemon_reload: yes
+      failed_when: false
+
+    - name: Enable storage bind mounts service (but do not start)
+      systemd:
+        name: setup-storage-bind-mounts.service
         enabled: yes
         state: stopped
         daemon_reload: yes
@@ -185,7 +255,7 @@
       command: systemctl is-enabled verify-cache-volume.service
       register: service_status
       changed_when: false
-      failed_when: service_status.stdout != "enabled"
+      failed_when: service_status.rc != 0
 
     - name: Verify mount unit installation
       command: systemctl is-enabled var-snap.mount
@@ -193,20 +263,32 @@
       changed_when: false
       failed_when: mount_status.stdout != "enabled"
 
-    - name: Verify containerd mount unit installation
-      command: systemctl is-enabled var-lib-rancher-k3s-agent-containerd.mount
-      register: containerd_mount_status
+    - name: Verify cache storage mount unit installation
+      command: systemctl is-enabled cache-storage.mount
+      register: cache_storage_mount_status
       changed_when: false
-      failed_when: containerd_mount_status.stdout != "enabled"
+      failed_when: cache_storage_mount_status.stdout != "enabled"
 
-    - name: Verify containerd init service installation
-      command: systemctl is-enabled containerd-cache-init.service
-      register: containerd_init_status
+    - name: Verify verify storage service installation (disabled during build, will be enabled in cleanup)
+      command: systemctl is-enabled verify-storage.service
+      register: verify_storage_status
       changed_when: false
-      failed_when: containerd_init_status.stdout != "enabled"
+      failed_when: verify_storage_status.stdout != "disabled"
 
-    - name: Verify Chutes agent symlink service installation
-      command: systemctl is-enabled setup-chutes-agent-symlink.service
-      register: chutes_agent_symlink_status
+    - name: Verify storage init service installation
+      command: systemctl is-enabled storage-init.service
+      register: storage_init_status
       changed_when: false
-      failed_when: chutes_agent_symlink_status.stdout != "enabled"
+      failed_when: storage_init_status.stdout != "enabled"
+
+    - name: Verify cache setup service installation
+      command: systemctl is-enabled setup-cache.service
+      register: cache_status
+      changed_when: false
+      failed_when: cache_status.stdout != "enabled"
+
+    - name: Verify storage bind mounts service installation
+      command: systemctl is-enabled setup-storage-bind-mounts.service
+      register: storage_bind_mounts_status
+      changed_when: false
+      failed_when: storage_bind_mounts_status.stdout != "enabled"
