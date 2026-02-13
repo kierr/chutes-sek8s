@@ -21,34 +21,15 @@ echo "=== Bridge Network Setup ==="
 echo "Architecture: VM ← TAP ← Bridge ← NAT ← Internet"
 echo
 
-# Parse arguments
+# Parse arguments (parse all first so --clean sees e.g. --public-iface when given after)
+DO_CLEAN=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --bridge-ip) BRIDGE_IP="$2"; VM_GATEWAY="${BRIDGE_IP%/*}"; shift 2 ;;
     --vm-ip) VM_IP="$2"; shift 2 ;;
     --vm-dns) VM_DNS="$2"; shift 2 ;;
     --public-iface) PUBLIC_IFACE="$2"; shift 2 ;;
-    --clean)
-      # BRIDGE_NET is derived from BRIDGE_IP (set below so it reflects any --bridge-ip already parsed)
-      BRIDGE_NET="$(echo "$BRIDGE_IP" | awk -F'[./]' '{printf "%s.%s.%s.0/%s\n",$1,$2,$3,$5}')"
-      # Remove only rules for this run's config (user must pass same IP/CIDR as when rules were added)
-      sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22" 2>/dev/null || true
-      sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || true
-      sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || true
-      sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
-      sudo iptables -D FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || true
-      sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT 2>/dev/null || true
-      sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-      sudo iptables -t nat -D POSTROUTING -s "$BRIDGE_NET" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || true
-      # Remove TAP interface
-      sudo ip link delete "$TAP_IFACE" 2>/dev/null || true
-      
-      # Remove bridge
-      sudo ip link delete "$BRIDGE_NAME" 2>/dev/null || true
-      
-      echo "Bridge network setup cleaned."
-      exit 0
-      ;;
+    --clean) DO_CLEAN=1; shift ;;
     --help)
       echo "Usage: $0 [options]"
       echo "Simple bridge setup - reliable and well-tested"
@@ -67,6 +48,22 @@ done
 
 # BRIDGE_NET derived from BRIDGE_IP (single place, after args parsed)
 BRIDGE_NET="$(echo "$BRIDGE_IP" | awk -F'[./]' '{printf "%s.%s.%s.0/%s\n",$1,$2,$3,$5}')"
+
+if [[ -n "$DO_CLEAN" ]]; then
+  # Remove only rules for this run's config (user must pass same IP/CIDR and --public-iface as when rules were added)
+  sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22" 2>/dev/null || true
+  sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || true
+  sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || true
+  sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
+  sudo iptables -D FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || true
+  sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT 2>/dev/null || true
+  sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+  sudo iptables -t nat -D POSTROUTING -s "$BRIDGE_NET" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || true
+  sudo ip link delete "$TAP_IFACE" 2>/dev/null || true
+  sudo ip link delete "$BRIDGE_NAME" 2>/dev/null || true
+  echo "Bridge network setup cleaned."
+  exit 0
+fi
 
 echo "1. Creating bridge interface..."
 # Check if bridge already exists
