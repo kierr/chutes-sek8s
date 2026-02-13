@@ -73,7 +73,22 @@ class DirectoryInfo(BaseModel):
     size_bytes: int = Field(..., description="Total size in bytes")
     size_human: str = Field(..., description="Human-readable size")
     depth: int = Field(..., description="Depth level from root path")
-    percentage: Optional[float] = Field(None, description="Percentage of total disk usage")
+    percentage: Optional[float] = Field(
+        None,
+        description="Percentage of consumed space under the parent path (not of filesystem capacity)",
+    )
+
+
+class FilesystemInfo(BaseModel):
+    source: str = Field(..., description="Device or filesystem label (e.g. /dev/sda1)")
+    target: str = Field(..., description="Mount point")
+    total_bytes: int = Field(..., description="Total size in bytes")
+    used_bytes: int = Field(..., description="Used size in bytes")
+    available_bytes: int = Field(..., description="Available size in bytes")
+    total_human: str = Field(..., description="Total size in human-readable format")
+    used_human: str = Field(..., description="Used size in human-readable format")
+    available_human: str = Field(..., description="Available size in human-readable format")
+    used_percent: float = Field(..., description="Percentage of filesystem capacity used")
 
 
 class DiskSpaceResponse(BaseModel):
@@ -85,6 +100,10 @@ class DiskSpaceResponse(BaseModel):
     diagnostic_mode: bool = Field(False, description="Whether diagnostic mode was enabled")
     max_depth: Optional[int] = Field(None, description="Maximum depth analyzed in diagnostic mode")
     top_n: Optional[int] = Field(None, description="Number of top offenders shown per level")
+    filesystems: Optional[List[FilesystemInfo]] = Field(
+        None,
+        description="Filesystem capacity (one entry for path's mount, or all mounts when path is /)",
+    )
 
 
 class ShutdownResponse(BaseModel):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 from loguru import logger
@@ -16,6 +16,7 @@ from .models import CommandResult, ServiceDefinition, SERVICE_ALLOWLIST
 from .responses import (
     DirectoryInfo,
     DiskSpaceResponse,
+    FilesystemInfo,
     NvidiaSmiResponse,
     ServiceInfo,
     ServiceStatus,
@@ -216,6 +217,68 @@ def human_readable_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
+def _parse_df_line(line: str) -> Optional[FilesystemInfo]:
+    """Parse a line from df -k output (default or --output=source,size,used,avail,pcent,target)."""
+    parts = line.split()
+    if len(parts) < 6:
+        return None
+    try:
+        size_kb = int(parts[1])
+        used_kb = int(parts[2])
+        avail_kb = int(parts[3])
+    except ValueError:
+        return None
+    source = parts[0]
+    pcent_str = parts[4].rstrip("%")
+    try:
+        used_percent = float(pcent_str)
+    except ValueError:
+        used_percent = (used_kb / size_kb * 100) if size_kb > 0 else 0.0
+    target = " ".join(parts[5:]) if len(parts) > 5 else ""
+    total_bytes = size_kb * 1024
+    used_bytes = used_kb * 1024
+    available_bytes = avail_kb * 1024
+    return FilesystemInfo(
+        source=source,
+        target=target,
+        total_bytes=total_bytes,
+        used_bytes=used_bytes,
+        available_bytes=available_bytes,
+        total_human=human_readable_size(total_bytes),
+        used_human=human_readable_size(used_bytes),
+        available_human=human_readable_size(available_bytes),
+        used_percent=round(used_percent, 2),
+    )
+
+
+async def _get_filesystems(
+    validated_path: Path,
+    config: SystemStatusConfig,
+) -> Optional[List[FilesystemInfo]]:
+    """Run df -k for path (all mounts if path is /, else single filesystem). Returns None on failure."""
+    path_str = str(validated_path.resolve())
+    if path_str == "/":
+        command = ["df", "-k"]
+    else:
+        command = ["df", "-k", path_str]
+    try:
+        result = await run_command(
+            command,
+            config.command_timeout_seconds,
+            config.max_output_bytes,
+        )
+    except HTTPException:
+        return None
+    if result.exit_code != 0:
+        return None
+    filesystems: List[FilesystemInfo] = []
+    for line in result.stdout.strip().splitlines():
+        info = _parse_df_line(line)
+        if info is not None:
+            filesystems.append(info)
+    return filesystems if filesystems else None
+
+
 async def get_disk_space_simple(
     validated_path: Path,
     config: SystemStatusConfig,
@@ -269,6 +332,7 @@ async def get_disk_space_simple(
         for d in directories:
             d.percentage = (d.size_bytes / total_bytes) * 100
 
+    filesystems = await _get_filesystems(validated_path, config)
     return DiskSpaceResponse(
         path=str(validated_path),
         directories=directories,
@@ -276,6 +340,7 @@ async def get_disk_space_simple(
         total_size_human=human_readable_size(total_bytes),
         stdout_truncated=result.stdout_truncated,
         diagnostic_mode=False,
+        filesystems=filesystems,
     )
 
 
@@ -349,6 +414,7 @@ async def get_disk_space_diagnostic(
 
     top_offenders.sort(key=lambda d: d.size_bytes, reverse=True)
 
+    filesystems = await _get_filesystems(validated_path, config)
     return DiskSpaceResponse(
         path=str(validated_path),
         directories=top_offenders,
@@ -358,6 +424,7 @@ async def get_disk_space_diagnostic(
         diagnostic_mode=True,
         max_depth=max_depth,
         top_n=top_n,
+        filesystems=filesystems,
     )
 
 
