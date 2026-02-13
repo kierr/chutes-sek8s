@@ -16,7 +16,6 @@ K3S_API_PORT=6443
 NODE_PORTS="30000:32767"
 STATUS_PORT=8080
 TAP_IFACE="vmtap0"
-BRIDGE_NET="$(echo $BRIDGE_IP | awk -F'[./]' '{printf "%s.%s.%s.0/%s\n",$1,$2,$3,$5}')"
 
 echo "=== Bridge Network Setup ==="
 echo "Architecture: VM ← TAP ← Bridge ← NAT ← Internet"
@@ -30,15 +29,17 @@ while [[ $# -gt 0 ]]; do
     --vm-dns) VM_DNS="$2"; shift 2 ;;
     --public-iface) PUBLIC_IFACE="$2"; shift 2 ;;
     --clean)
-      # Clean up everything
+      # BRIDGE_NET is derived from BRIDGE_IP (set below so it reflects any --bridge-ip already parsed)
+      BRIDGE_NET="$(echo "$BRIDGE_IP" | awk -F'[./]' '{printf "%s.%s.%s.0/%s\n",$1,$2,$3,$5}')"
+      # Remove only rules for this run's config (user must pass same IP/CIDR as when rules were added)
       sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22" 2>/dev/null || true
       sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || true
       sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || true
-  sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
       sudo iptables -D FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || true
+      sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT 2>/dev/null || true
       sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
       sudo iptables -t nat -D POSTROUTING -s "$BRIDGE_NET" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || true
-      
       # Remove TAP interface
       sudo ip link delete "$TAP_IFACE" 2>/dev/null || true
       
@@ -63,6 +64,9 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# BRIDGE_NET derived from BRIDGE_IP (single place, after args parsed)
+BRIDGE_NET="$(echo "$BRIDGE_IP" | awk -F'[./]' '{printf "%s.%s.%s.0/%s\n",$1,$2,$3,$5}')"
 
 echo "1. Creating bridge interface..."
 # Check if bridge already exists
@@ -111,29 +115,32 @@ fi
 echo "3. Setting up routing and NAT..."
 sudo sysctl -w net.ipv4.ip_forward=1
 
-# Port forwarding rules (idempotent)
-sudo iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22" 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22"
+# Remove any existing rules for this run's config (idempotent: re-run with same config is safe)
+sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22" 2>/dev/null || true
+sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || true
+sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || true
+sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
+sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT 2>/dev/null || true
+sudo iptables -t nat -D POSTROUTING -s "$BRIDGE_NET" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || true
 
-sudo iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT"
-
-sudo iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}"
-
-sudo iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT"
+# Port forwarding rules (add current config)
+sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT" -j DNAT --to-destination "${VM_IP%/*}:22"
+sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT"
+sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}"
+sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT"
 
 # Traffic forwarding rules
+# Allow VM → internet (bridge out to public)
 sudo iptables -C FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || \
   sudo iptables -A FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT
-
+# Allow NEW connections from internet → VM (so DNAT'd traffic reaches the VM)
+sudo iptables -A FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT
+# Allow return traffic (VM replies back to remote clients)
 sudo iptables -C FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
   sudo iptables -A FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT
 
 # NAT for outbound traffic
-sudo iptables -t nat -C POSTROUTING -s "${BRIDGE_IP%/*}/24" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || \
-  sudo iptables -t nat -A POSTROUTING -s "${BRIDGE_IP%/*}/24" -o "$PUBLIC_IFACE" -j MASQUERADE
+sudo iptables -t nat -A POSTROUTING -s "${BRIDGE_IP%/*}/24" -o "$PUBLIC_IFACE" -j MASQUERADE
 
 echo "   ✓ NAT and forwarding rules configured"
 echo
