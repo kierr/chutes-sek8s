@@ -1557,7 +1557,7 @@
               }
             ],
             "title": "Percentage",
-            "description": "Percentage of total disk usage"
+            "description": "Percentage of consumed space under the parent path (not of filesystem capacity)"
           }
         },
         "type": "object",
@@ -1629,6 +1629,21 @@
             ],
             "title": "Top N",
             "description": "Number of top offenders shown per level"
+          },
+          "filesystems": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FilesystemInfo"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filesystems",
+            "description": "Filesystem capacity (one entry for path's mount, or all mounts when path is /)"
           }
         },
         "type": "object",
@@ -1654,6 +1669,68 @@
           "chute_id"
         ],
         "title": "DownloadRequest"
+      },
+      "FilesystemInfo": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Device or filesystem label (e.g. /dev/sda1)"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "Mount point"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "description": "Total size in bytes"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes",
+            "description": "Used size in bytes"
+          },
+          "available_bytes": {
+            "type": "integer",
+            "title": "Available Bytes",
+            "description": "Available size in bytes"
+          },
+          "total_human": {
+            "type": "string",
+            "title": "Total Human",
+            "description": "Total size in human-readable format"
+          },
+          "used_human": {
+            "type": "string",
+            "title": "Used Human",
+            "description": "Used size in human-readable format"
+          },
+          "available_human": {
+            "type": "string",
+            "title": "Available Human",
+            "description": "Available size in human-readable format"
+          },
+          "used_percent": {
+            "type": "number",
+            "title": "Used Percent",
+            "description": "Percentage of filesystem capacity used"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "total_bytes",
+          "used_bytes",
+          "available_bytes",
+          "total_human",
+          "used_human",
+          "available_human",
+          "used_percent"
+        ],
+        "title": "FilesystemInfo"
       },
       "HTTPValidationError": {
         "properties": {
