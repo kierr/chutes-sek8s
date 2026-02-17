@@ -179,6 +179,20 @@ async def collect_service_status(
     )
 
 
+VIRTUAL_FS_EXCLUDES = ["/proc", "/sys", "/dev", "/run", "/snap"]
+
+
+def _du_exclude_args(target_path: Path) -> List[str]:
+    """Return --exclude flags for virtual/pseudo filesystems when scanning root.
+
+    These directories cause permission errors and slow scans without
+    providing useful disk-utilization data.
+    """
+    if str(target_path) != "/":
+        return []
+    return [f"--exclude={d}" for d in VIRTUAL_FS_EXCLUDES]
+
+
 def validate_path(path: str) -> Path:
     """Validate and resolve path, ensuring it's safe to query."""
     try:
@@ -287,6 +301,7 @@ async def get_disk_space_simple(
     command = ["sudo", "du", "-k"]
     if not cross_filesystems:
         command.append("-x")
+    command.extend(_du_exclude_args(validated_path))
     command.extend(["--max-depth=1", str(validated_path)])
 
     timeout = max(config.command_timeout_seconds * 5, 120)
@@ -354,6 +369,7 @@ async def get_disk_space_diagnostic(
     command = ["sudo", "du", "-k"]
     if not cross_filesystems:
         command.append("-x")
+    command.extend(_du_exclude_args(validated_path))
     command.extend([f"--max-depth={max_depth}", str(validated_path)])
 
     timeout = max(config.command_timeout_seconds * 5, 120)

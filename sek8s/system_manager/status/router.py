@@ -196,6 +196,7 @@ async def overview(
     summary="Get directory sizes",
     description="Returns sizes of immediate subdirectories within a given path",
 )
+@aiocache_cached(ttl=120)
 async def get_disk_space(
     config: SystemStatusConfig = Depends(get_config),
     path: str = Query("/", description="Directory path to analyze"),
