@@ -43,6 +43,8 @@ class HuggingFaceSnapshot:
         self.externally_managed = externally_managed
         self._task: Optional[asyncio.Task] = None
         self._total_bytes: Optional[int] = None
+        self._started_at: Optional[float] = None
+        self._initial_bytes: Optional[int] = None
         self._reconciled: bool = False
 
     # ------------------------------------------------------------------
@@ -122,6 +124,33 @@ class HuggingFaceSnapshot:
             return min(100.0, max(0.0, 100.0 * size / self._total_bytes))
         return None
 
+    @property
+    def download_rate(self) -> Optional[float]:
+        """Average bytes/sec since this download session started."""
+        if not self.is_in_progress or self._started_at is None:
+            return None
+        elapsed = time.monotonic() - self._started_at
+        if elapsed <= 0:
+            return None
+        size = self.size_bytes
+        if size is None:
+            return None
+        downloaded = size - (self._initial_bytes or 0)
+        if downloaded <= 0:
+            return None
+        return downloaded / elapsed
+
+    @property
+    def eta_seconds(self) -> Optional[float]:
+        """Estimated seconds remaining based on current download rate."""
+        rate = self.download_rate
+        if rate is None or rate <= 0 or self._total_bytes is None:
+            return None
+        remaining = self._total_bytes - (self.size_bytes or 0)
+        if remaining <= 0:
+            return 0.0
+        return remaining / rate
+
     # ------------------------------------------------------------------
     # HF cache scanning
     # ------------------------------------------------------------------
@@ -166,6 +195,8 @@ class HuggingFaceSnapshot:
             status=status,
             size_bytes=size,
             percent_complete=self.percent_complete,
+            download_rate=self.download_rate,
+            eta_seconds=self.eta_seconds,
             last_accessed=last_acc,
             error=self.error,
         )
@@ -188,6 +219,8 @@ class HuggingFaceSnapshot:
         if total_bytes > 0:
             self._total_bytes = total_bytes
 
+        self._initial_bytes = self.size_bytes or 0
+        self._started_at = time.monotonic()
         self._task = asyncio.create_task(self._run_download())
         self._task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
 

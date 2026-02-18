@@ -49,6 +49,8 @@ class ChuteSnapshot:
     status: CacheChuteStatusEnum
     size_bytes: int
     percent_complete: Optional[float]
+    download_rate: Optional[float]
+    eta_seconds: Optional[float]
     last_accessed: Optional[float]
     error: Optional[str]
 
