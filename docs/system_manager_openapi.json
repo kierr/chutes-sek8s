@@ -1265,6 +1265,30 @@
             "title": "Percent Complete",
             "description": "Download progress 0-100 when in_progress and total size is known; omitted otherwise"
           },
+          "download_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Rate",
+            "description": "Average download speed in bytes/sec for the current session; omitted when not in_progress"
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds",
+            "description": "Estimated seconds until download completes; omitted when rate or total size is unknown"
+          },
           "repo_id": {
             "anyOf": [
               {
