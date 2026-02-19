@@ -4,53 +4,29 @@
 - name: Disable remote access
   when: not (enable_dev_mode | default(false) | bool)
   block:
-    - name: Create secure miner directory structure
-      file:
-        path: "/opt/miner/{{ item }}"
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-      loop:
-        - bin
-        - config
-        - logs
-        - data
-
-    - name: Remove user accounts except root
-      user:
+    - name: Disable and mask SSH service
+      systemd:
         name: "{{ item }}"
-        state: absent
-        remove: yes
+        enabled: no
+        state: stopped
+        masked: yes
       loop:
-        - ubuntu
-        - debian
-        - centos
-        - ec2-user
-        - cloud-user
-      failed_when: false
+        - ssh
+        - sshd
+        - ssh.socket
+        - sshd.socket
+      failed_when: false  # Don't fail if service doesn't exist
 
-    - name: Lock root account password
-      user:
-        name: root
-        password_lock: yes
-
-    - name: Remove sudo package to prevent privilege escalation
+    - name: Remove SSH packages completely
       package:
         name: "{{ item }}"
         state: absent
       loop:
-        - sudo
-        - sudo-ldap
+        - openssh-server
+        - ssh
+        - dropbear
+        - dropbear-bin
       failed_when: false
-
-    - name: Disable kernel console access
-      lineinfile:
-        path: /etc/default/grub
-        regexp: '^GRUB_CMDLINE_LINUX='
-        line: 'GRUB_CMDLINE_LINUX="console=ttyS0,115200n8 systemd.mask=getty@tty1.service systemd.mask=serial-getty@ttyS0.service"'
-        backup: yes
-      notify: update grub
 
     - name: Disable and mask console access services
       systemd:
@@ -100,26 +76,50 @@
         - rpcbind
       failed_when: false
 
-    - name: Disable and mask SSH service
-      systemd:
+    - name: Disable kernel console access
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX='
+        line: 'GRUB_CMDLINE_LINUX="console=ttyS0,115200n8 systemd.mask=getty@tty1.service systemd.mask=serial-getty@ttyS0.service"'
+        backup: yes
+      notify: update grub
+
+    - name: Remove user accounts except root
+      user:
         name: "{{ item }}"
-        enabled: no
-        masked: yes
+        state: absent
+        remove: yes
       loop:
-        - ssh
-        - sshd
-        - ssh.socket
-        - sshd.socket
+        - ubuntu
+        - debian
+        - centos
+        - ec2-user
+        - cloud-user
       failed_when: false
 
-    - name: Remove SSH packages completely
+    - name: Lock root account password
+      user:
+        name: root
+        password_lock: yes
+
+    - name: Remove sudo package to prevent privilege escalation
       package:
         name: "{{ item }}"
         state: absent
       loop:
-        - openssh-server
-        - ssh
-        - dropbear
-        - dropbear-bin
+        - sudo
+        - sudo-ldap
       failed_when: false
-      ignore_unreachable: true
+
+    - name: Create secure miner directory structure
+      file:
+        path: "/opt/miner/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - bin
+        - config
+        - logs
+        - data
