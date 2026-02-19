@@ -100,6 +100,18 @@
         - rpcbind
       failed_when: false
 
+    - name: Disable and mask SSH service
+      systemd:
+        name: "{{ item }}"
+        enabled: no
+        masked: yes
+      loop:
+        - ssh
+        - sshd
+        - ssh.socket
+        - sshd.socket
+      failed_when: false
+
     - name: Remove SSH packages completely
       package:
         name: "{{ item }}"
@@ -110,16 +122,4 @@
         - dropbear
         - dropbear-bin
       failed_when: false
-
-    - name: Disable and mask SSH service
-      systemd:
-        name: "{{ item }}"
-        enabled: no
-        state: stopped
-        masked: yes
-      loop:
-        - ssh
-        - sshd
-        - ssh.socket
-        - sshd.socket
-      failed_when: false
+      ignore_unreachable: true
