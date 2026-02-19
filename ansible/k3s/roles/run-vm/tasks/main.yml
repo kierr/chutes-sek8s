@@ -251,8 +251,8 @@
   ansible.builtin.command: |
     virt-install \
       --name "{{ vm_name }}" \
-      --ram 3072 \
-      --vcpus 2 \
+      --ram {{ build_vm_ram }} \
+      --vcpus {{ build_vm_vcpus }} \
       --disk path="{{ build_img_path }}",format=qcow2 \
       --disk path=/var/lib/libvirt/boot/tdx-cloudinit.iso,device=cdrom \
       --os-variant ubuntu{{ ubuntu_version }} \
