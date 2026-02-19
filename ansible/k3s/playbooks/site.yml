@@ -171,6 +171,35 @@
         apply:
           tags: config
 
+- name: Security Hardening
+  hosts: vm
+  become: true
+  tags:
+    - security
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Include security role
+      ansible.builtin.include_role:
+        name: security
+
+- name: Cleanup VM state
+  hosts: vm
+  become: true
+  any_errors_fatal: false
+  tags:
+    - cleanup
+  handlers:
+    - name: Global handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
+  tasks:
+    - name: Cleanup
+      ansible.builtin.include_role:
+        name: cleanup
+        apply:
+          tags: cleanup
+
 - name: Remove remote access
   hosts: vm
   become: true
@@ -187,21 +216,8 @@
           tags: harden-access
       when: not debug_build | default(false)
 
-- name: Security Hardening
-  hosts: vm
-  become: true
-  tags:
-    - security
-  handlers:
-    - name: Global handlers
-      ansible.builtin.import_tasks: "{{ playbook_dir }}/../handlers/main.yml"
-  tasks:
-    - name: Include security role
-      ansible.builtin.include_role:
-        name: security
-
-- name: Cleanup to ensure fresh state for cloud init and k3s
-  hosts: all
+- name: Shutdown and finalize VM image
+  hosts: host
   become: true
   any_errors_fatal: false
   tags:
