@@ -1,7 +1,7 @@
 [Unit]
 Description=sek8s System Manager (status + cache)
-After=network.target config-manager.service
-Wants=network.target
+After=network.target config-manager.service setup-cache.service
+Wants=network.target setup-cache.service
 
 [Service]
 Type=simple
