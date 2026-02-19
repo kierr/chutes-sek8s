@@ -13,27 +13,126 @@
     state: present
     update_cache: yes
 
-- name: Ensure libvirt default network is active
-  ansible.builtin.command: virsh net-start default
+- name: Detect non-conflicting network for build VM
+  ansible.builtin.shell: |
+    python3 << 'PYEOF'
+    import ipaddress, json, subprocess
+    result = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True)
+    host_supernets = set()
+    for line in result.stdout.strip().split('\n'):
+        if not line.strip():
+            continue
+        parts = line.split()
+        iface = parts[1]
+        if iface == 'lo' or iface.startswith('virbr'):
+            continue
+        for i, p in enumerate(parts):
+            if p == 'inet' and i + 1 < len(parts):
+                addr = ipaddress.ip_interface(parts[i + 1])
+                supernet = ipaddress.ip_network(str(addr.ip) + '/16', strict=False)
+                host_supernets.add(supernet)
+    candidates = {{ build_vm_network_candidates | to_json }}
+    selected = candidates[-1]
+    for c in candidates:
+        gw_supernet = ipaddress.ip_network(c['gateway'] + '/16', strict=False)
+        if not any(gw_supernet.overlaps(h) for h in host_supernets):
+            selected = c
+            break
+    print(json.dumps(selected))
+    PYEOF
+  register: _network_detection
+  changed_when: false
+
+- name: Set build VM network configuration
+  ansible.builtin.set_fact:
+    build_vm_ip: "{{ (_network_detection.stdout | from_json).vm_ip }}"
+    _net_gateway: "{{ (_network_detection.stdout | from_json).gateway }}"
+    _net_netmask: "{{ (_network_detection.stdout | from_json).netmask }}"
+    _net_dhcp_start: "{{ (_network_detection.stdout | from_json).dhcp_start }}"
+    _net_dhcp_end: "{{ (_network_detection.stdout | from_json).dhcp_end }}"
+
+- name: Display selected build VM network
+  ansible.builtin.debug:
+    msg: "Selected build VM network: {{ _net_gateway }}/{{ _net_netmask }} (VM IP: {{ build_vm_ip }})"
+
+- name: Check if build VM network exists
+  ansible.builtin.shell: virsh net-info {{ build_vm_network }} 2>/dev/null
+  register: _net_exists
   changed_when: false
   failed_when: false
 
-- name: Set libvirt default network to autostart
-  ansible.builtin.command: virsh net-autostart default
+- name: Get existing network gateway
+  ansible.builtin.shell: |
+    virsh net-dumpxml {{ build_vm_network }} | python3 -c "
+    import sys, xml.etree.ElementTree as ET
+    root = ET.parse(sys.stdin).getroot()
+    print(root.find('ip').get('address', ''))
+    "
+  register: _existing_gateway
+  when: _net_exists.rc == 0
+  changed_when: false
+
+- name: Destroy VM on stale network
+  ansible.builtin.command: virsh destroy "{{ vm_name }}"
+  when: _net_exists.rc == 0 and _existing_gateway.stdout != _net_gateway
+  changed_when: false
+  failed_when: false
+
+- name: Undefine VM on stale network
+  ansible.builtin.command: virsh undefine "{{ vm_name }}"
+  when: _net_exists.rc == 0 and _existing_gateway.stdout != _net_gateway
+  changed_when: false
+  failed_when: false
+
+- name: Destroy stale network
+  ansible.builtin.command: virsh net-destroy {{ build_vm_network }}
+  when: _net_exists.rc == 0 and _existing_gateway.stdout != _net_gateway
+  changed_when: false
+  failed_when: false
+
+- name: Undefine stale network
+  ansible.builtin.command: virsh net-undefine {{ build_vm_network }}
+  when: _net_exists.rc == 0 and _existing_gateway.stdout != _net_gateway
+  changed_when: false
+  failed_when: false
+
+- name: Define build VM network
+  ansible.builtin.shell: |
+    virsh net-define /dev/stdin <<'EOF'
+    <network>
+      <name>{{ build_vm_network }}</name>
+      <forward mode="nat"/>
+      <bridge name="{{ build_vm_network_bridge }}" stp="on" delay="0"/>
+      <ip address="{{ _net_gateway }}" netmask="{{ _net_netmask }}">
+        <dhcp>
+          <range start="{{ _net_dhcp_start }}" end="{{ _net_dhcp_end }}"/>
+        </dhcp>
+      </ip>
+    </network>
+    EOF
+  when: _net_exists.rc != 0 or _existing_gateway.stdout != _net_gateway
+
+- name: Ensure build VM network is active
+  ansible.builtin.command: virsh net-start {{ build_vm_network }}
+  changed_when: false
+  failed_when: false
+
+- name: Set build VM network to autostart
+  ansible.builtin.command: virsh net-autostart {{ build_vm_network }}
   changed_when: false
   failed_when: false
 
 - name: Remove any existing DHCP reservations for build VM
   ansible.builtin.shell: |
-    virsh net-dumpxml default | grep -q "{{ build_vm_mac }}" && \
-    virsh net-update default delete ip-dhcp-host \
+    virsh net-dumpxml {{ build_vm_network }} | grep -q "{{ build_vm_mac }}" && \
+    virsh net-update {{ build_vm_network }} delete ip-dhcp-host \
       "<host mac='{{ build_vm_mac }}'/>" --live --config || true
   changed_when: false
   failed_when: false
 
 - name: Create static DHCP reservation for build VM
   ansible.builtin.command: |
-    virsh net-update default add-last ip-dhcp-host \
+    virsh net-update {{ build_vm_network }} add-last ip-dhcp-host \
       "<host mac='{{ build_vm_mac }}' name='build-node' ip='{{ build_vm_ip }}'/>" \
       --live --config
   register: reservation_result
@@ -158,7 +257,7 @@
       --disk path=/var/lib/libvirt/boot/tdx-cloudinit.iso,device=cdrom \
       --os-variant ubuntu{{ ubuntu_version }} \
       --virt-type "{{ virt_type }}" \
-      --network network=default,mac={{ build_vm_mac }} \
+      --network network={{ build_vm_network }},mac={{ build_vm_mac }} \
       --graphics vnc,listen=0.0.0.0,port="{{ vnc_port }}" \
       --import \
       --noautoconsole
