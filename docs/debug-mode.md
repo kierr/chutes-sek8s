@@ -142,8 +142,8 @@ fi
 
 ```bash
 # Create unencrypted volumes with labels
-./host-tools/scripts/create-cache.sh cache.qcow2 50G tdx-cache
-./host-tools/scripts/create-cache.sh containerd-cache.qcow2 100G containerd-cache
+./host-tools/scripts/volumes/create-cache.sh cache.qcow2 50G tdx-cache
+./host-tools/scripts/volumes/create-cache.sh containerd-cache.qcow2 100G containerd-cache
 
 # Run VM with both volumes attached
 ./host-tools/scripts/run-td \
