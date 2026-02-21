@@ -10,7 +10,6 @@
       - qemu-utils
       - cryptsetup
       - cloud-image-utils
-      - python3-gi
     state: present
     update_cache: yes
 
