@@ -206,7 +206,7 @@
           "status"
         ],
         "summary": "Get service logs",
-        "description": "Returns recent journal logs for a specific service",
+        "description": "Returns the last N journal log lines for a specific service",
         "operationId": "get_service_logs_status_services__service_id__logs_get",
         "parameters": [
           {
@@ -225,9 +225,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
+              "description": "Number of recent log lines to return",
               "default": 200,
               "title": "Lines"
-            }
+            },
+            "description": "Number of recent log lines to return"
           },
           {
             "name": "since_minutes",
@@ -300,6 +302,109 @@
                 "schema": {
                   "$ref": "#/components/schemas/ServiceLogsResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status/services/{service_id}/logs/stream": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Stream service logs",
+        "description": "Stream live journal logs for a specific service via journalctl --follow",
+        "operationId": "stream_service_logs_status_services__service_id__logs_stream_get",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Service Id"
+            }
+          },
+          {
+            "name": "since_minutes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1440,
+              "minimum": 0,
+              "description": "Only logs from last N minutes (0 = no filter)",
+              "default": 0,
+              "title": "Since Minutes"
+            },
+            "description": "Only logs from last N minutes (0 = no filter)"
+          },
+          {
+            "name": "X-Chutes-Hotkey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Hotkey"
+            }
+          },
+          {
+            "name": "X-Chutes-Nonce",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Nonce"
+            }
+          },
+          {
+            "name": "X-Chutes-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
