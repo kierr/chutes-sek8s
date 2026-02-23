@@ -8,7 +8,8 @@ import os
 import subprocess
 
 from chutes_host.detection import (
-    detect_infiniband_devices,
+    detect_infiniband_pfs,
+    detect_infiniband_vfs,
     detect_nvidia_gpus,
     detect_nvswitches,
     get_gpu_bdfs,
@@ -19,6 +20,7 @@ from chutes_host.gpu.tools import ensure_gpu_tools_available
 from chutes_host.qemu import PciTopologyState
 from chutes_host.vfio import (
     bind_explicit_devices_to_vfio,
+    ensure_sriov_vfs,
     install_udev_rules,
     virsh_bind_device,
 )
@@ -100,6 +102,8 @@ def _prepare_devices(
 
     for gpu in gpus:
         virsh_bind_device(gpu)
+    for ib_dev in ib_devices:
+        virsh_bind_device(ib_dev)
 
     install_udev_rules(_scripts_dir())
 
@@ -175,11 +179,19 @@ def setup_passthrough(cmd: list[str]):
         else []
     )
 
-    ib_devices = (
-        detect_infiniband_devices()
-        if profile.should_passthrough_infiniband
-        else []
-    )
+    ib_devices: list[str] = []
+    if profile.should_passthrough_infiniband:
+        ib_pfs = detect_infiniband_pfs()
+        if ib_pfs:
+            print(f'  Creating SR-IOV VFs from {len(ib_pfs)} InfiniBand PF(s)...')
+            for pf in ib_pfs:
+                if ensure_sriov_vfs(pf):
+                    print(f'    {pf} → VF(s) created')
+                else:
+                    print(f'    Warning: Could not create VFs on {pf}')
+            ib_devices = detect_infiniband_vfs(ib_pfs)
+            if not ib_devices:
+                print('  Warning: No InfiniBand VFs found after creation')
 
     print(f'  Detected {len(gpus)} GPUs: {gpus}')
     if nvswitches:

@@ -4,6 +4,7 @@ All functions are side-effect-free: they read lspci / nvidia-gpu-tools output
 and return BDF lists or model mappings without modifying system state.
 """
 
+import os
 import re
 import subprocess
 
@@ -120,18 +121,61 @@ def get_gpu_models_from_lspci(bdfs: list[str]) -> dict[str, str]:
 _PCI_CLASS_INFINIBAND = '0207'
 
 
-def detect_infiniband_devices() -> list[str]:
-    """Detect InfiniBand controller BDFs via lspci (vendor 15b3, class 0207).
+def _is_vf(bdf: str) -> bool:
+    """Return True if device is an SR-IOV Virtual Function (has physfn)."""
+    physfn = f'/sys/bus/pci/devices/{bdf}/physfn'
+    return os.path.exists(physfn)
 
-    Only passes InfiniBand controllers, not BlueField-3 Ethernet/DMA/SoC
-    management devices which may not support VFIO passthrough.
+
+def detect_infiniband_pfs() -> list[str]:
+    """Detect InfiniBand Physical Function BDFs (vendor 15b3, class 0207, not VF).
+
+    PFs stay bound to mlx5_core on the host; we create VFs from them for passthrough.
     """
     devices = []
     for line in _lspci_lines(_MELLANOX_VENDOR):
         parts = line.strip().split()
         if not parts:
             continue
-        # Filter by PCI class 0207 (InfiniBand controller)
-        if f'[{_PCI_CLASS_INFINIBAND}]' in line:
-            devices.append(parts[0])
+        if f'[{_PCI_CLASS_INFINIBAND}]' not in line:
+            continue
+        bdf = parts[0]
+        if not _is_vf(bdf):
+            devices.append(bdf)
     return sorted(devices)
+
+
+def detect_infiniband_vfs(pf_bdfs: list[str]) -> list[str]:
+    """Return VF BDFs whose Physical Function is in pf_bdfs."""
+    pf_set = set(pf_bdfs)
+    vfs = []
+    for line in _lspci_lines(_MELLANOX_VENDOR):
+        parts = line.strip().split()
+        if not parts:
+            continue
+        if f'[{_PCI_CLASS_INFINIBAND}]' not in line:
+            continue
+        bdf = parts[0]
+        if not _is_vf(bdf):
+            continue
+        try:
+            physfn_path = os.path.realpath(f'/sys/bus/pci/devices/{bdf}/physfn')
+            pf_bdf = os.path.basename(physfn_path)
+            if pf_bdf in pf_set:
+                vfs.append(bdf)
+        except OSError:
+            continue
+    return sorted(vfs)
+
+
+def detect_infiniband_devices() -> list[str]:
+    """Detect InfiniBand devices for passthrough.
+
+    Prefers SR-IOV VFs over PFs: if VFs exist for our PFs, returns VFs.
+    Otherwise returns PFs (caller should create VFs via ensure_infiniband_vfs).
+    """
+    pfs = detect_infiniband_pfs()
+    if not pfs:
+        return []
+    vfs = detect_infiniband_vfs(pfs)
+    return vfs if vfs else pfs
