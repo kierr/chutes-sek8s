@@ -291,6 +291,32 @@
             state: touch
             mode: '0644'
 
+        - name: Install infiniband-mask script
+          ansible.builtin.copy:
+            src: infiniband-mask.sh
+            dest: /usr/local/sbin/infiniband-mask.sh
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install infiniband-mask service
+          ansible.builtin.copy:
+            src: infiniband-mask.service
+            dest: /etc/systemd/system/infiniband-mask.service
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Enable infiniband-mask service
+          ansible.builtin.systemd:
+            name: infiniband-mask.service
+            enabled: true
+            state: stopped
+
+        - name: Reload systemd after installing infiniband-mask
+          ansible.builtin.systemd:
+            daemon_reload: true
+
     - name: Configure file limits
       ansible.builtin.blockinfile:
         path: /etc/security/limits.conf

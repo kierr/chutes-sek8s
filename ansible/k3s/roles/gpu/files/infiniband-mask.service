@@ -1,0 +1,14 @@
+[Unit]
+Description=Mask InfiniBand services when no Mellanox/ConnectX devices are present
+After=local-fs.target
+Before=openibd.service opensmd.service rdma-core.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/infiniband-mask.sh
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
