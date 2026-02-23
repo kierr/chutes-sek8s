@@ -291,10 +291,11 @@
     # detects Mellanox devices and masks/disables only when absent.
     - name: InfiniBand Setup Tasks
       block:
-        - name: Install InfiniBand diagnostics and NVLSM
+        - name: Install InfiniBand diagnostics, rdma-core, and NVLSM
           ansible.builtin.apt:
             name:
               - infiniband-diags
+              - rdma-core
               - nvlsm
             state: present
 
