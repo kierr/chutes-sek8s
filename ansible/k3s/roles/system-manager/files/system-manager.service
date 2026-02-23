@@ -1,6 +1,9 @@
 [Unit]
 Description=sek8s System Manager (status + cache)
-After=network.target config-manager.service
+# Wants=setup-cache.service added via cleanup role drop-in; omitted here so starting
+# system-manager during build does not pull in setup-cache -> var-snap.mount (cache
+# volume not attached on build VM; mount failure triggers OnFailure=poweroff.target).
+After=network.target config-manager.service setup-cache.service
 Wants=network.target
 
 [Service]

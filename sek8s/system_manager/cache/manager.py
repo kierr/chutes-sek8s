@@ -43,7 +43,11 @@ class HuggingFaceSnapshot:
         self.externally_managed = externally_managed
         self._task: Optional[asyncio.Task] = None
         self._total_bytes: Optional[int] = None
+        self._started_at: Optional[float] = None
+        self._initial_bytes: Optional[int] = None
         self._reconciled: bool = False
+        self._scan_cache: Optional[tuple[int, Optional[str], Optional[str], Optional[float]]] = None
+        self._scan_cache_at: float = 0.0
 
     # ------------------------------------------------------------------
     # Path helpers
@@ -122,20 +126,57 @@ class HuggingFaceSnapshot:
             return min(100.0, max(0.0, 100.0 * size / self._total_bytes))
         return None
 
+    @property
+    def download_rate(self) -> Optional[float]:
+        """Average bytes/sec since this download session started."""
+        if not self.is_in_progress or self._started_at is None:
+            return None
+        elapsed = time.monotonic() - self._started_at
+        if elapsed <= 0:
+            return None
+        size = self.size_bytes
+        if size is None:
+            return None
+        downloaded = size - (self._initial_bytes or 0)
+        if downloaded <= 0:
+            return None
+        return downloaded / elapsed
+
+    @property
+    def eta_seconds(self) -> Optional[float]:
+        """Estimated seconds remaining based on current download rate."""
+        rate = self.download_rate
+        if rate is None or rate <= 0 or self._total_bytes is None:
+            return None
+        remaining = self._total_bytes - (self.size_bytes or 0)
+        if remaining <= 0:
+            return 0.0
+        return remaining / rate
+
     # ------------------------------------------------------------------
     # HF cache scanning
     # ------------------------------------------------------------------
 
-    def _scan_hub(self) -> tuple[int, Optional[str], Optional[str], Optional[float]]:
-        """Scan HF cache directory.
+    @property
+    def _scan_ttl(self) -> float:
+        """Shorter TTL while files are changing, longer once stable."""
+        return 30.0 if self.is_in_progress else 60.0
+
+    async def _scan_hub(self) -> tuple[int, Optional[str], Optional[str], Optional[float]]:
+        """Scan HF cache directory off the event loop.
 
         Returns ``(size_bytes, repo_id, revision, last_accessed)``
-        derived from a single ``scan_cache_dir`` call.
+        derived from a single ``scan_cache_dir`` call run in a thread.
+        Results are cached per-instance; TTL varies by download status.
         """
+        now = time.monotonic()
+        if self._scan_cache is not None and (now - self._scan_cache_at) < self._scan_ttl:
+            return self._scan_cache
+
         if not self.hub_path.exists():
             return (0, None, None, None)
         try:
-            info = scan_cache_dir(cache_dir=str(self.hub_path))
+            info = await asyncio.to_thread(scan_cache_dir, cache_dir=str(self.hub_path))
             size = info.size_on_disk
             repo_id: Optional[str] = None
             revision: Optional[str] = None
@@ -147,7 +188,10 @@ class HuggingFaceSnapshot:
                 if revisions:
                     revision = revisions[0].commit_hash
                 last_acc = max((r.last_accessed for r in repos), default=None)
-            return (size, repo_id, revision, last_acc)
+            result = (size, repo_id, revision, last_acc)
+            self._scan_cache = result
+            self._scan_cache_at = time.monotonic()
+            return result
         except Exception:
             return (0, None, None, None)
 
@@ -155,17 +199,31 @@ class HuggingFaceSnapshot:
     # Snapshot
     # ------------------------------------------------------------------
 
-    def snapshot(self) -> ChuteSnapshot:
+    async def snapshot(self) -> ChuteSnapshot:
         """Point-in-time snapshot backed by a single ``scan_cache_dir`` call."""
-        size, scan_repo_id, scan_revision, last_acc = self._scan_hub()
+        size, scan_repo_id, scan_revision, last_acc = await self._scan_hub()
         status = self.status
+        pct = None
+        rate = None
+        eta = None
+        if self.is_in_progress and self._total_bytes and self._total_bytes > 0 and size:
+            pct = min(100.0, max(0.0, 100.0 * size / self._total_bytes))
+            if self._started_at is not None:
+                elapsed = time.monotonic() - self._started_at
+                downloaded = size - (self._initial_bytes or 0)
+                if elapsed > 0 and downloaded > 0:
+                    rate = downloaded / elapsed
+                    remaining = self._total_bytes - size
+                    eta = remaining / rate if remaining > 0 else 0.0
         return ChuteSnapshot(
             chute_id=self.chute_id,
             repo_id=self.repo_id or scan_repo_id or "",
             revision=self.revision or scan_revision,
             status=status,
             size_bytes=size,
-            percent_complete=self.percent_complete,
+            percent_complete=pct,
+            download_rate=rate,
+            eta_seconds=eta,
             last_accessed=last_acc,
             error=self.error,
         )
@@ -178,6 +236,7 @@ class HuggingFaceSnapshot:
         """Prepare directories and launch the download task."""
         self.repo_id = repo_id
         self.revision = revision
+        self._scan_cache = None
 
         self.path.mkdir(parents=True, exist_ok=True)
         os.chmod(self.path, 0o2775)
@@ -188,8 +247,16 @@ class HuggingFaceSnapshot:
         if total_bytes > 0:
             self._total_bytes = total_bytes
 
+        self._initial_bytes = self.size_bytes or 0
+        self._started_at = time.monotonic()
         self._task = asyncio.create_task(self._run_download())
-        self._task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+        self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Invalidate scan cache so the next snapshot reflects final state."""
+        self._scan_cache = None
+        if not task.cancelled():
+            task.exception()
 
     @staticmethod
     def _chmod_tree(path: Path, mode: int) -> None:
@@ -375,6 +442,8 @@ class CacheManager:
     def __init__(self) -> None:
         self._chutes: dict[str, HuggingFaceSnapshot] = {}
         self._lock = asyncio.Lock()
+        self._last_sync: float = 0.0
+        self._sync_cooldown: float = 5.0
 
     async def initialize(self) -> None:
         """Scan disk and reconcile all chute cache directories."""
@@ -407,8 +476,14 @@ class CacheManager:
 
         Called before query endpoints so the manager always reflects the
         current state of the shared cache volume — including models
-        downloaded by chute pods at runtime.
+        downloaded by chute pods at runtime.  Skipped if called again
+        within ``_sync_cooldown`` seconds of the last run.
         """
+        now = time.monotonic()
+        if now - self._last_sync < self._sync_cooldown:
+            return
+        self._last_sync = now
+
         cache_base = Path(cache_config.cache_base).resolve()
         if not cache_base.exists():
             return
@@ -465,6 +540,12 @@ class CacheManager:
         async with self._lock:
             return list(self._chutes.values())
 
+    async def all_snapshots(self) -> list[ChuteSnapshot]:
+        """Return snapshots for all tracked chutes, scanning concurrently."""
+        async with self._lock:
+            chutes = list(self._chutes.values())
+        return list(await asyncio.gather(*(c.snapshot() for c in chutes)))
+
     async def remove(self, chute_id: str) -> bool:
         async with self._lock:
             chute = self._chutes.pop(chute_id, None)
@@ -485,17 +566,22 @@ class CacheManager:
         max_size_bytes = max_size_gb * 1024 * 1024 * 1024
         cutoff_time = time.time() - (max_age_days * 24 * 3600)
 
-        candidates: list[tuple[HuggingFaceSnapshot, int, float]] = []
         async with self._lock:
-            for chute in list(self._chutes.values()):
-                if chute.is_in_progress:
-                    continue
-                size, scan_repo_id, _, last_acc = chute._scan_hub()
-                if size == 0:
-                    continue
-                if exclude_pattern and scan_repo_id and exclude_pattern.lower() in scan_repo_id.lower():
-                    continue
-                candidates.append((chute, size, last_acc or 0))
+            eligible = [c for c in self._chutes.values() if not c.is_in_progress]
+
+        async def _scan(chute: HuggingFaceSnapshot):
+            size, scan_repo_id, _, last_acc = await chute._scan_hub()
+            return (chute, size, scan_repo_id, last_acc)
+
+        scanned = await asyncio.gather(*(_scan(c) for c in eligible))
+
+        candidates: list[tuple[HuggingFaceSnapshot, int, float]] = []
+        for chute, size, scan_repo_id, last_acc in scanned:
+            if size == 0:
+                continue
+            if exclude_pattern and scan_repo_id and exclude_pattern.lower() in scan_repo_id.lower():
+                continue
+            candidates.append((chute, size, last_acc or 0))
 
         for chute, size, last_acc in candidates:
             if last_acc < cutoff_time:

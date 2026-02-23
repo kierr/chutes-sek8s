@@ -21,5 +21,6 @@
     },
     "cursorpyright.analysis.exclude": [
         "**/.venv/*"
-    ]
+    ],
+    "ansible.python.interpreterPath": ".venv/bin/python"
 }

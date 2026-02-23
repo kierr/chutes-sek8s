@@ -111,10 +111,10 @@ async def download_status(
             return CacheDownloadStatusResponse(
                 chutes=[CacheChuteStatus(chute_id=chute_id, status=CacheChuteStatusEnum.MISSING)]
             )
-        return CacheDownloadStatusResponse(chutes=[_snap_to_status(chute.snapshot())])
+        return CacheDownloadStatusResponse(chutes=[_snap_to_status(await chute.snapshot())])
 
-    chutes = await mgr.all()
-    return CacheDownloadStatusResponse(chutes=[_snap_to_status(c.snapshot()) for c in chutes])
+    snapshots = await mgr.all_snapshots()
+    return CacheDownloadStatusResponse(chutes=[_snap_to_status(s) for s in snapshots])
 
 
 @router.delete(
@@ -176,7 +176,7 @@ async def overview(
     _auth: bool = Depends(authorize(allow_miner=True, purpose="cache")),
 ) -> CacheOverviewResponse:
     await mgr.sync_from_disk()
-    chutes = await mgr.all()
-    entries = [_snap_to_overview(c.snapshot()) for c in chutes]
+    snapshots = await mgr.all_snapshots()
+    entries = [_snap_to_overview(s) for s in snapshots]
     total = sum(e.size_bytes for e in entries)
     return CacheOverviewResponse(total_size_bytes=total, chutes=entries)

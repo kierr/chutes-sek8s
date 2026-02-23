@@ -34,14 +34,27 @@ def parse_key_value(output: str) -> Dict[str, str]:
     return parsed
 
 
-def truncate(value: str, limit: int) -> tuple[str, bool]:
+def truncate(value: str, limit: int, *, keep_tail: bool = False) -> tuple[str, bool]:
     if len(value) <= limit:
         return value, False
+    if keep_tail:
+        return value[-limit:], True
     return value[:limit], True
 
 
-async def run_command(command: List[str], timeout: float, limit: int) -> CommandResult:
-    """Run a command and return its output. Raises HTTPException on failure."""
+async def run_command(
+    command: List[str],
+    timeout: float,
+    limit: int,
+    *,
+    keep_tail: bool = False,
+) -> CommandResult:
+    """Run a command and return its output. Raises HTTPException on failure.
+
+    When *keep_tail* is True the last *limit* bytes of stdout/stderr are
+    kept instead of the first, which is the correct behaviour for log
+    output where the most recent entries are at the end.
+    """
     logger.debug("Executing command: {}", command)
     command_name = command[1] if command[0] == "sudo" else command[0]
 
@@ -65,8 +78,12 @@ async def run_command(command: List[str], timeout: float, limit: int) -> Command
             detail={"error": "missing_binary", "binary": command_name},
         ) from exc
 
-    stdout, stdout_truncated = truncate(stdout_bytes.decode("utf-8", errors="replace"), limit)
-    stderr, stderr_truncated = truncate(stderr_bytes.decode("utf-8", errors="replace"), limit)
+    stdout, stdout_truncated = truncate(
+        stdout_bytes.decode("utf-8", errors="replace"), limit, keep_tail=keep_tail,
+    )
+    stderr, stderr_truncated = truncate(
+        stderr_bytes.decode("utf-8", errors="replace"), limit, keep_tail=keep_tail,
+    )
 
     result = CommandResult(
         exit_code=process.returncode,

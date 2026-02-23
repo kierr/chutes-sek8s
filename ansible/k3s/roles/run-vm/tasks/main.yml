@@ -23,11 +23,6 @@
   changed_when: false
   failed_when: false
 
-- name: Get MAC address for build VM
-  ansible.builtin.set_fact:
-    build_vm_mac: "52:54:00:60:a6:0a"
-    build_vm_ip: "192.168.122.176"
-
 - name: Remove any existing DHCP reservations for build VM
   ansible.builtin.shell: |
     virsh net-dumpxml default | grep -q "{{ build_vm_mac }}" && \
@@ -157,8 +152,8 @@
   ansible.builtin.command: |
     virt-install \
       --name "{{ vm_name }}" \
-      --ram 3072 \
-      --vcpus 2 \
+      --ram {{ build_vm_ram }} \
+      --vcpus {{ build_vm_vcpus }} \
       --disk path="{{ build_img_path }}",format=qcow2 \
       --disk path=/var/lib/libvirt/boot/tdx-cloudinit.iso,device=cdrom \
       --os-variant ubuntu{{ ubuntu_version }} \

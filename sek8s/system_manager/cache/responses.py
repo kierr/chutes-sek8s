@@ -37,6 +37,14 @@ class CacheChuteStatus(BaseModel):
         None,
         description="Download progress 0-100 when in_progress and total size is known; omitted otherwise",
     )
+    download_rate: Optional[float] = Field(
+        None,
+        description="Average download speed in bytes/sec for the current session; omitted when not in_progress",
+    )
+    eta_seconds: Optional[float] = Field(
+        None,
+        description="Estimated seconds until download completes; omitted when rate or total size is unknown",
+    )
     repo_id: Optional[str] = Field(None, description="HF repo ID when present or in_progress")
     revision: Optional[str] = Field(None, description="Revision when present or in_progress")
     size_bytes: Optional[int] = Field(None, description="Size in bytes when present")
