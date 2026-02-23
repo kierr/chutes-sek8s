@@ -292,10 +292,19 @@
     - name: InfiniBand Setup Tasks
       block:
         - name: Install InfiniBand diagnostics and NVLSM
-          apt:
+          ansible.builtin.apt:
             name:
               - infiniband-diags
               - nvlsm
+            state: present
+
+        # NVSHMEM: GPU-to-GPU communication over PCIe/NVLink/InfiniBand.
+        # Uses CUDA repo (keyring already installed). Match CUDA major from cuda_version.
+        - name: Install NVSHMEM (NVIDIA Shared Memory) for InfiniBand GPUDirect
+          ansible.builtin.apt:
+            name:
+              - "libnvshmem3-cuda-{{ cuda_version | split('-') | first }}"
+              - "libnvshmem3-dev-cuda-{{ cuda_version | split('-') | first }}"
             state: present
 
         - name: Load ib_umad kernel module
