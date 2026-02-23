@@ -229,6 +229,34 @@
           ansible.builtin.systemd:
             daemon_reload: true
 
+        # infiniband-mask: always installed for all GPU topologies. At boot it detects
+        # Mellanox devices and masks IB services only when absent (same image for B200/H200/etc).
+        - name: Install infiniband-mask script
+          ansible.builtin.copy:
+            src: infiniband-mask.sh
+            dest: /usr/local/sbin/infiniband-mask.sh
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install infiniband-mask service
+          ansible.builtin.copy:
+            src: infiniband-mask.service
+            dest: /etc/systemd/system/infiniband-mask.service
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Install infiniband-mask service (disabled until cleanup enables at runtime)
+          ansible.builtin.systemd:
+            name: infiniband-mask.service
+            enabled: no
+            state: stopped
+
+        - name: Reload systemd after installing infiniband-mask
+          ansible.builtin.systemd:
+            daemon_reload: true
+
         - name: Create nvidia-fabricmanager override directory
           ansible.builtin.file:
             path: /etc/systemd/system/nvidia-fabricmanager.service.d
@@ -258,8 +286,10 @@
             - driver_install.changed
             - reboot_on_driver_upgrade | default(false) | bool
 
+    # Always run: same VM image for all topologies (B200+IB, H200, etc).
+    # Packages and ib_umad are installed; infiniband-mask.service at boot
+    # detects Mellanox devices and masks/disables only when absent.
     - name: InfiniBand Setup Tasks
-      when: infiniband | default(false) | bool
       block:
         - name: Install InfiniBand diagnostics and NVLSM
           apt:
@@ -290,32 +320,6 @@
             path: /usr/share/nvidia/nvlsm/nvlsm.conf
             state: touch
             mode: '0644'
-
-        - name: Install infiniband-mask script
-          ansible.builtin.copy:
-            src: infiniband-mask.sh
-            dest: /usr/local/sbin/infiniband-mask.sh
-            owner: root
-            group: root
-            mode: '0755'
-
-        - name: Install infiniband-mask service
-          ansible.builtin.copy:
-            src: infiniband-mask.service
-            dest: /etc/systemd/system/infiniband-mask.service
-            owner: root
-            group: root
-            mode: '0644'
-
-        - name: Enable infiniband-mask service
-          ansible.builtin.systemd:
-            name: infiniband-mask.service
-            enabled: true
-            state: stopped
-
-        - name: Reload systemd after installing infiniband-mask
-          ansible.builtin.systemd:
-            daemon_reload: true
 
     - name: Configure file limits
       ansible.builtin.blockinfile:
