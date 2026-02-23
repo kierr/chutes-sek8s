@@ -11,6 +11,14 @@ from abc import ABC, abstractmethod
 class GpuProfile(ABC):
     """Base class for GPU-type-specific passthrough behavior."""
 
+    # PCI device IDs that identify this GPU (e.g. [10de:2901] -> 2901). Override in subclass.
+    pci_device_ids: list[str] = []
+
+    def matches_device_id(self, device_id: str) -> bool:
+        """Return True if device_id matches this profile's pci_device_ids."""
+        device_id = device_id.lower()
+        return any(device_id == pid.lower() for pid in self.pci_device_ids)
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -47,6 +55,7 @@ class GpuProfile(ABC):
 
 
 class B200Profile(GpuProfile):
+    pci_device_ids = ['2901']
 
     @property
     def name(self) -> str:
@@ -71,6 +80,7 @@ class B200Profile(GpuProfile):
 
 
 class H200Profile(GpuProfile):
+    pci_device_ids = ['2335']  # H200 SXM (GH100)
 
     @property
     def name(self) -> str:

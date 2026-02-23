@@ -13,6 +13,15 @@ from chutes_host.gpu.tools import ensure_gpu_tools_available
 _NVIDIA_VENDOR = '10de'
 _MELLANOX_VENDOR = '15b3'
 
+# NVSwitch device ID (H100/H200 multi-GPU systems)
+_PCI_DEVICE_NVSWITCH = '22a3'
+
+
+def _extract_device_id(lspci_line: str, vendor: str = '10de') -> str | None:
+    """Extract PCI device ID from lspci line, e.g. [10de:2901] -> 2901."""
+    match = re.search(rf'\[{vendor}:([0-9a-f]{{4}})\]', lspci_line, re.IGNORECASE)
+    return match.group(1).lower() if match else None
+
 
 def _lspci_lines(vendor: str) -> list[str]:
     """Return lspci -Dnn lines matching the given PCI vendor ID.
@@ -25,15 +34,21 @@ def _lspci_lines(vendor: str) -> list[str]:
 
 
 def _match_gpu_model(lspci_line: str) -> str | None:
-    """Return the GPU_PROFILES key that appears in an lspci line, or None."""
-    for model_name in GPU_PROFILES:
-        if model_name in lspci_line:
-            return model_name
+    """Return the GPU_PROFILES key for an lspci line, or None.
+
+    Uses PCI device ID only; each profile's matches_device_id checks pci_device_ids.
+    """
+    device_id = _extract_device_id(lspci_line, _NVIDIA_VENDOR)
+    if not device_id:
+        return None
+    for name, profile in GPU_PROFILES.items():
+        if profile.matches_device_id(device_id):
+            return name
     return None
 
 
 def detect_nvidia_gpus() -> list[str]:
-    """Detect NVIDIA GPU BDFs via lspci (vendor 10de, known GPU_PROFILES model in description)."""
+    """Detect NVIDIA GPU BDFs via lspci (vendor 10de, device IDs from GpuProfile.pci_device_ids)."""
     devices = []
     for line in _lspci_lines(_NVIDIA_VENDOR):
         parts = line.strip().split()
@@ -74,13 +89,14 @@ def get_gpu_bdfs() -> list[str] | None:
 
 
 def detect_nvswitches() -> list[str]:
-    """Detect NVSwitch BDFs via lspci (vendor 10de, description contains NVSwitch)."""
+    """Detect NVSwitch BDFs via lspci (vendor 10de, device ID 22a3)."""
     devices = []
     for line in _lspci_lines(_NVIDIA_VENDOR):
         parts = line.strip().split()
         if not parts:
             continue
-        if 'NVSwitch' in line:
+        device_id = _extract_device_id(line, _NVIDIA_VENDOR)
+        if device_id == _PCI_DEVICE_NVSWITCH:
             devices.append(parts[0])
     return sorted(devices)
 
