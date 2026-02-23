@@ -117,10 +117,7 @@ sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$SSH_PORT"
 sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_PORT" -j DNAT --to-destination "${VM_IP%/*}:$K3S_API_PORT" 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}" 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT" 2>/dev/null || true
-# Remove our FORWARD rules from wherever they are (so we can re-insert at top)
 sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT 2>/dev/null || true
-sudo iptables -D FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-sudo iptables -D FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || true
 sudo iptables -t nat -D POSTROUTING -s "$BRIDGE_NET" -o "$PUBLIC_IFACE" -j MASQUERADE 2>/dev/null || true
 
 # Port forwarding rules (add current config)
@@ -129,11 +126,15 @@ sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$K3S_API_P
 sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$NODE_PORTS" -j DNAT --to-destination "${VM_IP%/*}"
 sudo iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$STATUS_PORT" -j DNAT --to-destination "${VM_IP%/*}:$STATUS_PORT"
 
-# Traffic forwarding rules (insert at top so they are evaluated before libvirt's FORWARD rules)
-# Insert in reverse order so final order is: to VM, ESTABLISHED, br0→public
-sudo iptables -I FORWARD 1 -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT
-sudo iptables -I FORWARD 1 -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT
-sudo iptables -I FORWARD 1 -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT
+# Traffic forwarding rules
+# Allow VM → internet (bridge out to public)
+sudo iptables -C FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT 2>/dev/null || \
+  sudo iptables -A FORWARD -i "$BRIDGE_NAME" -o "$PUBLIC_IFACE" -j ACCEPT
+# Allow NEW connections from internet → VM (so DNAT'd traffic reaches the VM)
+sudo iptables -A FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -d "${VM_IP%/*}" -j ACCEPT
+# Allow return traffic (VM replies back to remote clients)
+sudo iptables -C FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+  sudo iptables -A FORWARD -i "$PUBLIC_IFACE" -o "$BRIDGE_NAME" -m state --state RELATED,ESTABLISHED -j ACCEPT
 
 # NAT for outbound traffic
 sudo iptables -t nat -A POSTROUTING -s "${BRIDGE_IP%/*}/24" -o "$PUBLIC_IFACE" -j MASQUERADE
