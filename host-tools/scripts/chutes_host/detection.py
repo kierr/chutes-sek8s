@@ -116,11 +116,22 @@ def get_gpu_models_from_lspci(bdfs: list[str]) -> dict[str, str]:
     return result
 
 
+# PCI class 0207 = InfiniBand controller. Excludes Ethernet [0200], DMA [0801], etc.
+_PCI_CLASS_INFINIBAND = '0207'
+
+
 def detect_infiniband_devices() -> list[str]:
-    """Detect Mellanox/NVIDIA InfiniBand/ConnectX BDFs via lspci (vendor 15b3)."""
+    """Detect InfiniBand controller BDFs via lspci (vendor 15b3, class 0207).
+
+    Only passes InfiniBand controllers, not BlueField-3 Ethernet/DMA/SoC
+    management devices which may not support VFIO passthrough.
+    """
     devices = []
     for line in _lspci_lines(_MELLANOX_VENDOR):
         parts = line.strip().split()
-        if parts:
+        if not parts:
+            continue
+        # Filter by PCI class 0207 (InfiniBand controller)
+        if f'[{_PCI_CLASS_INFINIBAND}]' in line:
             devices.append(parts[0])
     return sorted(devices)
