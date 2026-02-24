@@ -206,7 +206,7 @@
           "status"
         ],
         "summary": "Get service logs",
-        "description": "Returns recent journal logs for a specific service",
+        "description": "Returns the last N journal log lines for a specific service",
         "operationId": "get_service_logs_status_services__service_id__logs_get",
         "parameters": [
           {
@@ -225,9 +225,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
+              "description": "Number of recent log lines to return",
               "default": 200,
               "title": "Lines"
-            }
+            },
+            "description": "Number of recent log lines to return"
           },
           {
             "name": "since_minutes",
@@ -300,6 +302,109 @@
                 "schema": {
                   "$ref": "#/components/schemas/ServiceLogsResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status/services/{service_id}/logs/stream": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Stream service logs",
+        "description": "Stream live journal logs for a specific service via journalctl --follow",
+        "operationId": "stream_service_logs_status_services__service_id__logs_stream_get",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Service Id"
+            }
+          },
+          {
+            "name": "since_minutes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1440,
+              "minimum": 0,
+              "description": "Only logs from last N minutes (0 = no filter)",
+              "default": 0,
+              "title": "Since Minutes"
+            },
+            "description": "Only logs from last N minutes (0 = no filter)"
+          },
+          {
+            "name": "X-Chutes-Hotkey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Hotkey"
+            }
+          },
+          {
+            "name": "X-Chutes-Nonce",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Nonce"
+            }
+          },
+          {
+            "name": "X-Chutes-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -952,6 +1057,18 @@
             }
           },
           {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Force delete even if download is in progress",
+              "default": false,
+              "title": "Force"
+            },
+            "description": "Force delete even if download is in progress"
+          },
+          {
             "name": "X-Chutes-Hotkey",
             "in": "header",
             "required": false,
@@ -1239,7 +1356,7 @@
           },
           "status": {
             "$ref": "#/components/schemas/CacheChuteStatusEnum",
-            "description": "One of: in_progress, present, missing, failed"
+            "description": "One of: in_progress, present, missing, failed, incomplete, stale"
           },
           "percent_complete": {
             "anyOf": [
@@ -1252,6 +1369,30 @@
             ],
             "title": "Percent Complete",
             "description": "Download progress 0-100 when in_progress and total size is known; omitted otherwise"
+          },
+          "download_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Rate",
+            "description": "Average download speed in bytes/sec for the current session; omitted when not in_progress"
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds",
+            "description": "Estimated seconds until download completes; omitted when rate or total size is unknown"
           },
           "repo_id": {
             "anyOf": [
@@ -1315,7 +1456,9 @@
           "in_progress",
           "present",
           "missing",
-          "failed"
+          "failed",
+          "incomplete",
+          "stale"
         ],
         "title": "CacheChuteStatusEnum",
         "description": "Status for a chute in the download status (GET) and overview."
@@ -1436,6 +1579,11 @@
             ],
             "title": "Last Accessed",
             "description": "Last access time (Unix)"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CacheChuteStatusEnum",
+            "description": "Status: present, in_progress, incomplete, stale, failed, etc.",
+            "default": "present"
           }
         },
         "type": "object",
@@ -1538,7 +1686,7 @@
               }
             ],
             "title": "Percentage",
-            "description": "Percentage of total disk usage"
+            "description": "Percentage of consumed space under the parent path (not of filesystem capacity)"
           }
         },
         "type": "object",
@@ -1610,6 +1758,21 @@
             ],
             "title": "Top N",
             "description": "Number of top offenders shown per level"
+          },
+          "filesystems": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FilesystemInfo"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filesystems",
+            "description": "Filesystem capacity (one entry for path's mount, or all mounts when path is /)"
           }
         },
         "type": "object",
@@ -1635,6 +1798,68 @@
           "chute_id"
         ],
         "title": "DownloadRequest"
+      },
+      "FilesystemInfo": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Device or filesystem label (e.g. /dev/sda1)"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "Mount point"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "description": "Total size in bytes"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "title": "Used Bytes",
+            "description": "Used size in bytes"
+          },
+          "available_bytes": {
+            "type": "integer",
+            "title": "Available Bytes",
+            "description": "Available size in bytes"
+          },
+          "total_human": {
+            "type": "string",
+            "title": "Total Human",
+            "description": "Total size in human-readable format"
+          },
+          "used_human": {
+            "type": "string",
+            "title": "Used Human",
+            "description": "Used size in human-readable format"
+          },
+          "available_human": {
+            "type": "string",
+            "title": "Available Human",
+            "description": "Available size in human-readable format"
+          },
+          "used_percent": {
+            "type": "number",
+            "title": "Used Percent",
+            "description": "Percentage of filesystem capacity used"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "total_bytes",
+          "used_bytes",
+          "available_bytes",
+          "total_human",
+          "used_human",
+          "available_human",
+          "used_percent"
+        ],
+        "title": "FilesystemInfo"
       },
       "HTTPValidationError": {
         "properties": {

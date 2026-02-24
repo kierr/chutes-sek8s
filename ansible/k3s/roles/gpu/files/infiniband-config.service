@@ -1,0 +1,18 @@
+[Unit]
+Description=Configure InfiniBand: mask services and disable ib_umad when no Mellanox/ConnectX devices are present
+# Run after udev settles so passthrough PCI devices are visible (align with config-volume-validator)
+After=systemd-udev-settle.service
+After=local-fs.target
+Before=openibd.service opensmd.service rdma-core.service rdma.service ibacm.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/infiniband-config.sh
+TimeoutStartSec=30
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

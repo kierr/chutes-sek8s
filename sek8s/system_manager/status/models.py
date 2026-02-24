@@ -43,10 +43,10 @@ SERVICE_ALLOWLIST: Dict[str, ServiceDefinition] = {
         unit="k3s.service",
         description="Lightweight Kubernetes control plane",
     ),
-    "storage-init": ServiceDefinition(
-        service_id="storage-init",
-        unit="storage-init.service",
-        description="Initialize k3s/kubelet storage on LUKS volume (sync from root on first boot)",
+    "storage-bind-mounts": ServiceDefinition(
+        service_id="storage-bind-mounts",
+        unit="setup-storage-bind-mounts.service",
+        description="Sync and bind-mount storage volume directories (k3s, kubelet, rancher config, etc.)",
     ),
     "nvidia-persistenced": ServiceDefinition(
         service_id="nvidia-persistenced",
@@ -57,5 +57,10 @@ SERVICE_ALLOWLIST: Dict[str, ServiceDefinition] = {
         service_id="nvidia-fabricmanager",
         unit="nvidia-fabricmanager.service",
         description="NVIDIA fabric manager",
+    ),
+    "infiniband-config": ServiceDefinition(
+        service_id="infiniband-config",
+        unit="infiniband-config.service",
+        description="Configure InfiniBand: mask services and disable ib_umad when no Mellanox devices present",
     ),
 }

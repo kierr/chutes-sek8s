@@ -7,7 +7,7 @@ The System Status service is a read-only FastAPI endpoint that runs inside the g
 
 | Capability | Description |
 | --- | --- |
-| Service inventory | Enumerate the fixed allowlist of managed systemd units (admission controller, **system manager**, attestation service, k3s server, `nvidia-persistenced`, and `nvidia-fabricmanager`). |
+| Service inventory | Enumerate the fixed allowlist of managed systemd units (admission controller, **system manager**, attestation service, k3s server, `nvidia-persistenced`, `nvidia-fabricmanager`, and `infiniband-config`). |
 | Service status | Return summarized health derived from `systemctl show` for an allowlisted unit. |
 | Service logs | Tail the latest N log lines (`journalctl -u <unit>`) with optional time window filtering. |
 | GPU telemetry | Surface `nvidia-smi` output in either default (summary) or `-q` (detailed) modes with optional GPU index selection. |

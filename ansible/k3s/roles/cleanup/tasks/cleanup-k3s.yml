@@ -153,8 +153,6 @@
 
     - name: Remove cache seed markers
       ansible.builtin.shell: rm -f /var/snap/containerd/.seeded*
-      args:
-        warn: false
 
     - name: Clear k3s cluster init markers
       ansible.builtin.shell:

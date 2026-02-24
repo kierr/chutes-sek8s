@@ -31,11 +31,19 @@ class CacheChuteStatus(BaseModel):
     chute_id: str = Field(..., description="Chute ID")
     status: CacheChuteStatusEnum = Field(
         ...,
-        description="One of: in_progress, present, missing, failed",
+        description="One of: in_progress, present, missing, failed, incomplete, stale",
     )
     percent_complete: Optional[float] = Field(
         None,
         description="Download progress 0-100 when in_progress and total size is known; omitted otherwise",
+    )
+    download_rate: Optional[float] = Field(
+        None,
+        description="Average download speed in bytes/sec for the current session; omitted when not in_progress",
+    )
+    eta_seconds: Optional[float] = Field(
+        None,
+        description="Estimated seconds until download completes; omitted when rate or total size is unknown",
     )
     repo_id: Optional[str] = Field(None, description="HF repo ID when present or in_progress")
     revision: Optional[str] = Field(None, description="Revision when present or in_progress")
@@ -53,6 +61,10 @@ class CacheOverviewEntry(BaseModel):
     revision: Optional[str] = Field(None, description="Revision")
     size_bytes: int = Field(..., description="Size in bytes")
     last_accessed: Optional[float] = Field(None, description="Last access time (Unix)")
+    status: CacheChuteStatusEnum = Field(
+        CacheChuteStatusEnum.PRESENT,
+        description="Status: present, in_progress, incomplete, stale, failed, etc.",
+    )
 
 
 class CacheOverviewResponse(BaseModel):

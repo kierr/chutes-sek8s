@@ -146,6 +146,17 @@ async def test_disk_space_simple_mode(status_client, test_dir_structure):
     total_from_dirs = sum(d["size_bytes"] for d in result["directories"])
     assert result["total_size_bytes"] >= total_from_dirs
 
+    # Filesystem capacity: non-root path should have exactly one filesystem entry
+    filesystems = result.get("filesystems")
+    assert filesystems is not None, "filesystems should be present"
+    assert isinstance(filesystems, list), "filesystems should be a list"
+    assert len(filesystems) == 1, "non-root path should return one filesystem"
+    fs = filesystems[0]
+    for key in ("source", "target", "total_bytes", "used_bytes", "available_bytes", "used_percent"):
+        assert key in fs, f"filesystem entry should have {key}"
+    assert fs["total_bytes"] >= 0 and fs["used_bytes"] >= 0 and fs["available_bytes"] >= 0
+    assert 0 <= fs["used_percent"] <= 100
+
 
 @pytest.mark.asyncio
 async def test_disk_space_diagnostic_mode_depth_2(status_client, test_dir_structure):
@@ -329,5 +340,33 @@ async def test_disk_space_empty_directory(status_client):
         # Total size should be minimal (just directory overhead)
         assert result["total_size_bytes"] >= 0
 
+        # Filesystems should be present (one entry for this path's mount)
+        filesystems = result.get("filesystems")
+        if filesystems is not None:
+            assert isinstance(filesystems, list)
+            assert len(filesystems) >= 1
+            for fs in filesystems:
+                assert "source" in fs and "target" in fs
+                assert "total_bytes" in fs and "used_bytes" in fs and "available_bytes" in fs
+                assert "used_percent" in fs
+
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_disk_space_filesystems_root_path(status_client):
+    """Test that path=/ returns filesystems list (one or more mounts)."""
+    response = status_client.get("/status/disk/space?path=/")
+    assert response.status_code == 200
+    result = response.json()
+
+    filesystems = result.get("filesystems")
+    assert filesystems is not None, "filesystems should be present for path=/"
+    assert isinstance(filesystems, list), "filesystems should be a list"
+    assert len(filesystems) >= 1, "path=/ should return at least one filesystem"
+    for fs in filesystems:
+        for key in ("source", "target", "total_bytes", "used_bytes", "available_bytes", "used_percent"):
+            assert key in fs, f"filesystem entry should have {key}"
+        assert fs["total_bytes"] >= 0 and fs["used_bytes"] >= 0 and fs["available_bytes"] >= 0
+        assert 0 <= fs["used_percent"] <= 100

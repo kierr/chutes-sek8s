@@ -16,11 +16,11 @@ pip3 install pyyaml jsonschema
 
 ```bash
 # Start from template
-cp config.tmpl.yaml config.yaml
+cp config/config.tmpl.yaml config.yaml
 
 # Or use examples
-cp config.prod.example.yaml config.yaml    # For production
-cp config.debug.example.yaml config.yaml   # For debugging
+cp config/config.prod.example.yaml config.yaml    # For production
+cp config/config.debug.example.yaml config.yaml   # For debugging
 ```
 
 ### 3. Edit Config

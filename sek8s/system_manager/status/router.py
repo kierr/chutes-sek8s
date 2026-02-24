@@ -8,6 +8,7 @@ from functools import lru_cache
 
 from aiocache import cached as aiocache_cached
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from sek8s.config import SystemStatusConfig
@@ -97,21 +98,17 @@ async def get_service_status(
     "/services/{service_id}/logs",
     response_model=ServiceLogsResponse,
     summary="Get service logs",
-    description="Returns recent journal logs for a specific service",
+    description="Returns the last N journal log lines for a specific service",
 )
-@aiocache_cached(ttl=30)
 async def get_service_logs(
     service_id: str,
     config: SystemStatusConfig = Depends(get_config),
-    lines: int = Query(200, ge=1),
+    lines: int = Query(200, ge=1, description="Number of recent log lines to return"),
     since_minutes: int = Query(0, ge=0, le=1440, description="Only logs from last N minutes (0 = no filter)"),
     _auth: bool = Depends(authorize(allow_miner=True, allow_validator=True, purpose="status")),
 ) -> ServiceLogsResponse:
     service = resolve_service(service_id)
-
-    max_lines = config.log_tail_max
-    default_lines = config.log_tail_default
-    clamped_lines = max(1, min(lines or default_lines, max_lines))
+    clamped_lines = max(1, min(lines, config.log_tail_max))
 
     command = [
         "journalctl",
@@ -127,7 +124,8 @@ async def get_service_logs(
         command.append(f"--since={since_time.isoformat()}")
 
     result = await run_command(
-        command, config.command_timeout_seconds, config.max_output_bytes
+        command, config.command_timeout_seconds, config.max_output_bytes,
+        keep_tail=True,
     )
 
     entries = [line for line in result.stdout.splitlines() if line]
@@ -142,6 +140,58 @@ async def get_service_logs(
         stdout_truncated=result.stdout_truncated,
         logs=entries,
     )
+
+
+@router.get(
+    "/services/{service_id}/logs/stream",
+    summary="Stream service logs",
+    description="Stream live journal logs for a specific service via journalctl --follow",
+)
+async def stream_service_logs(
+    service_id: str,
+    config: SystemStatusConfig = Depends(get_config),
+    since_minutes: int = Query(0, ge=0, le=1440, description="Only logs from last N minutes (0 = no filter)"),
+    _auth: bool = Depends(authorize(allow_miner=True, allow_validator=True, purpose="status")),
+):
+    service = resolve_service(service_id)
+    return StreamingResponse(
+        _stream_journal(service, since_minutes, config),
+        media_type="text/plain",
+    )
+
+
+async def _stream_journal(service, since_minutes: int, config: SystemStatusConfig):
+    """Async generator that follows journalctl output for a service."""
+    command = [
+        "journalctl",
+        f"--unit={service.unit}",
+        "--no-pager",
+        "--output=short",
+        "--follow",
+    ]
+
+    if since_minutes > 0:
+        window_limit = min(since_minutes, config.log_window_max_minutes)
+        since_time = datetime.now(timezone.utc) - timedelta(minutes=window_limit)
+        command.append(f"--since={since_time.isoformat()}")
+
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        async for raw_line in process.stdout:
+            yield raw_line.decode("utf-8", errors="replace")
+    except (asyncio.CancelledError, GeneratorExit):
+        pass
+    finally:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
 
 
 @router.get(
@@ -196,6 +246,7 @@ async def overview(
     summary="Get directory sizes",
     description="Returns sizes of immediate subdirectories within a given path",
 )
+@aiocache_cached(ttl=120)
 async def get_disk_space(
     config: SystemStatusConfig = Depends(get_config),
     path: str = Query("/", description="Directory path to analyze"),
