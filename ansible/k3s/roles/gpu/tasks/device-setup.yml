@@ -229,6 +229,34 @@
           ansible.builtin.systemd:
             daemon_reload: true
 
+        # infiniband-config: always installed for all GPU topologies. At boot it detects
+        # Mellanox devices and masks IB services only when absent (same image for B200/H200/etc).
+        - name: Install infiniband-config script
+          ansible.builtin.copy:
+            src: infiniband-config.sh
+            dest: /usr/local/sbin/infiniband-config.sh
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install infiniband-config service
+          ansible.builtin.copy:
+            src: infiniband-config.service
+            dest: /etc/systemd/system/infiniband-config.service
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Install infiniband-config service (disabled until cleanup enables at runtime)
+          ansible.builtin.systemd:
+            name: infiniband-config.service
+            enabled: no
+            state: stopped
+
+        - name: Reload systemd after installing infiniband-config
+          ansible.builtin.systemd:
+            daemon_reload: true
+
         - name: Create nvidia-fabricmanager override directory
           ansible.builtin.file:
             path: /etc/systemd/system/nvidia-fabricmanager.service.d
@@ -258,14 +286,26 @@
             - driver_install.changed
             - reboot_on_driver_upgrade | default(false) | bool
 
+    # Always run: same VM image for all topologies (B200+IB, H200, etc).
+    # Packages and ib_umad are installed; infiniband-config.service at boot
+    # detects Mellanox devices and masks/disables only when absent.
     - name: InfiniBand Setup Tasks
-      when: infiniband | default(false) | bool
       block:
-        - name: Install InfiniBand diagnostics and NVLSM
-          apt:
+        - name: Install InfiniBand diagnostics, rdma-core, and NVLSM
+          ansible.builtin.apt:
             name:
               - infiniband-diags
+              - rdma-core
               - nvlsm
+            state: present
+
+        # NVSHMEM: GPU-to-GPU communication over PCIe/NVLink/InfiniBand.
+        # Uses CUDA repo (keyring already installed). Match CUDA major from cuda_version.
+        - name: Install NVSHMEM (NVIDIA Shared Memory) for InfiniBand GPUDirect
+          ansible.builtin.apt:
+            name:
+              - "libnvshmem3-cuda-{{ cuda_version | split('-') | first }}"
+              - "libnvshmem3-dev-cuda-{{ cuda_version | split('-') | first }}"
             state: present
 
         - name: Load ib_umad kernel module

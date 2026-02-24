@@ -19,6 +19,10 @@
   ansible.builtin.include_tasks: cleanup-gpu-verify-service.yml
   when: inventory_hostname in groups['vm']
 
+- name: Cleanup infiniband-config service
+  ansible.builtin.include_tasks: cleanup-infiniband-config-service.yml
+  when: inventory_hostname in groups['vm']
+
 - name: Cleanup verify storage service
   ansible.builtin.include_tasks: cleanup-verify-storage-service.yml
   when: inventory_hostname in groups['vm']

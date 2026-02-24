@@ -111,7 +111,7 @@ while [[ $# -gt 0 ]]; do
       ;;
 
     --template)
-      cp config.tmpl.yaml config.yaml
+      cp config/config.tmpl.yaml config.yaml
       echo "Created config.yaml"
       exit 0
       ;;
@@ -195,13 +195,13 @@ if [[ -n "$CONFIG_FILE" ]]; then
     exit 1
   fi
 
-  if [[ ! -f "./parse-config.py" ]]; then
-    echo "Error: parse-config.py not found in current directory"
+  if [[ ! -d "./chutes_host" ]]; then
+    echo "Error: chutes_host package not found in current directory"
     exit 1
   fi
 
   set +e
-  CONFIG_OUTPUT=$(python3 ./parse-config.py "$CONFIG_FILE" 2>&1)
+  CONFIG_OUTPUT=$(python3 -m chutes_host.config "$CONFIG_FILE" 2>&1)
   CONFIG_EXIT_CODE=$?
   set -e
 
@@ -343,7 +343,7 @@ if [[ -f "$CACHE_VOLUME" ]]; then
   echo "✓ Using existing cache volume: $CACHE_VOLUME"
 else
   echo "Creating cache volume at: $CACHE_VOLUME ($CACHE_SIZE)"
-  if sudo ./create-cache.sh "$CACHE_VOLUME" "$CACHE_SIZE" "tdx-cache"; then
+  if sudo ./volumes/create-cache.sh "$CACHE_VOLUME" "$CACHE_SIZE" "tdx-cache"; then
     echo "✓ Cache volume created"
   else
     echo "✗ Error: Failed to create cache volume at $CACHE_VOLUME"
@@ -366,7 +366,7 @@ if [[ -f "$STORAGE_VOLUME" ]]; then
   echo "✓ Using existing storage volume: $STORAGE_VOLUME"
 else
   echo "Creating storage volume at: $STORAGE_VOLUME ($STORAGE_SIZE)"
-  if sudo ./create-cache.sh "$STORAGE_VOLUME" "$STORAGE_SIZE" "storage"; then
+  if sudo ./volumes/create-cache.sh "$STORAGE_VOLUME" "$STORAGE_SIZE" "storage"; then
     echo "✓ Storage volume created"
   else
     echo "✗ Error: Failed to create storage volume at $STORAGE_VOLUME"
@@ -384,7 +384,7 @@ if [[ -n "$CONFIG_VOLUME" ]]; then
     echo "✓ Using existing config volume: $CONFIG_VOLUME"
   else
     echo "Creating config volume at configured path: $CONFIG_VOLUME"
-    if sudo ./create-config.sh "$CONFIG_VOLUME" "$HOSTNAME" "$MINER_SS58" "$MINER_SEED" "$VM_IP" "${BRIDGE_IP%/*}" "$VM_DNS"; then
+    if sudo ./volumes/create-config.sh "$CONFIG_VOLUME" "$HOSTNAME" "$MINER_SS58" "$MINER_SEED" "$VM_IP" "${BRIDGE_IP%/*}" "$VM_DNS"; then
       echo "✓ Config volume created"
     else
       echo "✗ Error: Failed to create config volume at $CONFIG_VOLUME"
@@ -396,7 +396,7 @@ else
   [[ -f "$CONFIG_VOLUME" ]] && sudo rm -f "$CONFIG_VOLUME"
 
   echo "Creating config volume: $CONFIG_VOLUME"
-  if sudo ./create-config.sh "$CONFIG_VOLUME" "$HOSTNAME" "$MINER_SS58" "$MINER_SEED" "$VM_IP" "${BRIDGE_IP%/*}" "$VM_DNS"; then
+  if sudo ./volumes/create-config.sh "$CONFIG_VOLUME" "$HOSTNAME" "$MINER_SS58" "$MINER_SEED" "$VM_IP" "${BRIDGE_IP%/*}" "$VM_DNS"; then
     echo "✓ Config volume created"
   else
     echo "✗ Error: Failed to create config volume at $CONFIG_VOLUME"

@@ -1,0 +1,11 @@
+---
+# Enable infiniband-config at runtime (align with gpu-verify, verify-storage).
+# The service runs at every boot and dynamically detects Mellanox devices:
+# if present, IB services run normally; if absent, they are masked and ib_umad is disabled.
+# Same VM image is used for all topologies (B200 with IB, H200 without, etc).
+- name: Enable infiniband-config service
+  ansible.builtin.systemd:
+    name: infiniband-config.service
+    enabled: yes
+    state: stopped
+  tags: service
