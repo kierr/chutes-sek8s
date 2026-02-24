@@ -1,6 +1,5 @@
 [Unit]
 Description=Mask InfiniBand services when no Mellanox/ConnectX devices are present
-Documentation=See config-volume-validator.service for device-dependent service pattern
 # Run after udev settles so passthrough PCI devices are visible (align with config-volume-validator)
 After=systemd-udev-settle.service
 After=local-fs.target
