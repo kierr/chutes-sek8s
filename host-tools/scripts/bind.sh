@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# LEGACY: This script is superseded by chutes_host.vfio (explicit BDF binding
+# inside run-td / chutes_host.passthrough). Kept for manual debugging only.
+#
 # bind-all-nvidia-complete.sh — bind every NVIDIA GPU and NVSwitch IOMMU-group to vfio-pci
 #
 # Run as root:  sudo ./bind-all-nvidia-complete.sh

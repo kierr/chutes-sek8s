@@ -58,4 +58,9 @@ SERVICE_ALLOWLIST: Dict[str, ServiceDefinition] = {
         unit="nvidia-fabricmanager.service",
         description="NVIDIA fabric manager",
     ),
+    "infiniband-config": ServiceDefinition(
+        service_id="infiniband-config",
+        unit="infiniband-config.service",
+        description="Configure InfiniBand: mask services and disable ib_umad when no Mellanox devices present",
+    ),
 }

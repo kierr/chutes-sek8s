@@ -92,7 +92,7 @@ Host tools automatically configure iptables rules for k3s API (port 6443) and No
 Production VMs require two attached volumes (created by host tools):
 
 #### Config Volume (`tdx-config`)
-- **Created by**: `host-tools/scripts/create-config.sh`
+- **Created by**: `host-tools/scripts/volumes/create-config.sh`
 - **Filesystem**: ext4 with label `tdx-config`
 - **Mount point**: `/var/config`
 - **Contents**:
@@ -102,7 +102,7 @@ Production VMs require two attached volumes (created by host tools):
   - `network-config.yaml` - Netplan configuration
 
 #### Cache Volume (`tdx-cache`)
-- **Created by**: `host-tools/scripts/create-cache.sh`
+- **Created by**: `host-tools/scripts/volumes/create-cache.sh`
 - **Filesystem**: ext4 with label `tdx-cache`
 - **Mount point**: `/var/snap`
 - **Purpose**: Persistent storage for model caches, container images

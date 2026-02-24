@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# LEGACY: Companion to bind.sh. Superseded by chutes_host.vfio (explicit BDF
+# binding inside run-td / chutes_host.passthrough). Kept for manual debugging only.
+#
 # unbind-all-nvidia.sh — unbind every NVIDIA GPU/NVSwitch from vfio-pci
 # and optionally rebind to the NVIDIA driver if present.
 #

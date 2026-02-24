@@ -290,10 +290,10 @@ For advanced users who want to manage components separately:
 ./bind.sh
 
 # Manually create cache volume
-sudo ./create-cache.sh cache.qcow2 5000G
+sudo ./volumes/create-cache.sh cache.qcow2 5000G
 
 # Manually create config volume
-sudo ./create-config.sh config.qcow2 hostname ss58 seed vm-ip gateway dns
+sudo ./volumes/create-config.sh config.qcow2 hostname ss58 seed vm-ip gateway dns
 
 # Manually setup network
 ./setup-bridge.sh --bridge-ip 192.168.100.1/24 \

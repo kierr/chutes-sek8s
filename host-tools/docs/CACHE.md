@@ -16,7 +16,7 @@ By default, the guest uses two volumes: **main storage** (mounted at `/cache/sto
 
 ```bash
 # Create a 5TB cache volume
-./scripts/create-cache.sh cache-volume.qcow2 5000G
+./scripts/volumes/create-cache.sh cache-volume.qcow2 5000G
 ```
 
 ## Manual Setup (Step-by-Step)
