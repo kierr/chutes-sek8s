@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-LOG_TAG="infiniband-mask"
+LOG_TAG="infiniband-config"
 
 log() {
     local msg="$1"
@@ -67,5 +67,5 @@ if [ ${#ib_umad_actions[@]} -gt 0 ]; then
     log "ib_umad: ${ib_umad_actions[*]}"
 fi
 
-log "infiniband-mask completed successfully"
+log "infiniband-config completed successfully"
 exit 0
