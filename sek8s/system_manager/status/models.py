@@ -22,6 +22,16 @@ class CommandResult:
     stderr_truncated: bool
 
 
+@dataclass
+class GpuResetResult:
+    """Result of a GPU reset operation (internal; router builds API response)."""
+
+    status: str
+    message: str
+    gpu: str
+    exit_code: int
+
+
 SERVICE_ALLOWLIST: Dict[str, ServiceDefinition] = {
     "admission-controller": ServiceDefinition(
         service_id="admission-controller",

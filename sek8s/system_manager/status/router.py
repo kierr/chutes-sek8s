@@ -17,6 +17,7 @@ from sek8s.services.util import authorize
 from .models import SERVICE_ALLOWLIST
 from .responses import (
     DiskSpaceResponse,
+    GpuResetResponse,
     HealthResponse,
     NvidiaSmiResponse,
     OverviewResponse,
@@ -31,6 +32,7 @@ from .util import (
     get_disk_space_diagnostic,
     get_disk_space_simple,
     nvidia_smi_impl,
+    reset_gpus,
     resolve_service,
     run_command,
     validate_path,
@@ -207,6 +209,30 @@ async def nvidia_smi(
     _auth: bool = Depends(authorize(allow_miner=True, allow_validator=True, purpose="status")),
 ) -> NvidiaSmiResponse:
     return await nvidia_smi_impl(detail, gpu, get_config)
+
+
+@router.post(
+    "/gpu/reset",
+    response_model=GpuResetResponse,
+    summary="Reset NVIDIA GPU(s)",
+    description="Resets GPU hardware/software state to clear CUDA state (e.g. after OOM). Requires miner/validator auth.",
+    dependencies=[Depends(authorize(allow_miner=True, allow_validator=True, purpose="status"))],
+)
+async def gpu_reset(
+    gpu: str = Query(
+        "all",
+        description="Comma-separated GPU indices or UUIDs (e.g. '0,1,2' or 'GPU-xxx'); use 'all' to reset all GPUs",
+    ),
+) -> GpuResetResponse:
+    logger.warning("GPU reset requested for gpu={}", gpu)
+    result = await reset_gpus(gpu)
+    return GpuResetResponse(
+        status=result.status,
+        message=result.message,
+        gpu=result.gpu,
+        exit_code=result.exit_code,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @router.get(

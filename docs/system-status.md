@@ -11,6 +11,7 @@ The System Status service is a read-only FastAPI endpoint that runs inside the g
 | Service status | Return summarized health derived from `systemctl show` for an allowlisted unit. |
 | Service logs | Tail the latest N log lines (`journalctl -u <unit>`) with optional time window filtering. |
 | GPU telemetry | Surface `nvidia-smi` output in either default (summary) or `-q` (detailed) modes with optional GPU index selection. |
+| GPU reset | Reset NVIDIA GPU(s) via `nvidia-smi --gpu-reset` to clear CUDA state (e.g. after OOM). Requires root (sudo); state-changing operation. |
 | Overview summary | Aggregate all service statuses with the latest `nvidia-smi` result to produce an "ok"/"degraded" snapshot. |
 
 Future enhancements (e.g., additional units) must be added explicitly to the allowlist to avoid broadening the attack surface.
@@ -36,6 +37,10 @@ By default the Ansible role configures the service to listen on `0.0.0.0:8080` i
   - `detail=true` swaps the command to `nvidia-smi -q`.
   - `gpu` can be `all` (default) or an integer GPU index; only a single index is accepted to keep the interface deterministic.
   - Output is returned as `{ "stdout": "...", "stdout_lines": ["line1", ...], "stderr": "...", "exit_code": <int> }`, making it easier for clients to render the text banner without reprocessing newline escapes.
+- `POST /gpu/reset?gpu=all`
+  - Resets GPU hardware/software state via `sudo nvidia-smi --gpu-reset`. Clears CUDA state (e.g. after OOM when swapping Chute pods).
+  - `gpu` can be `all` (default), a comma-separated list of GPU indices (e.g. `0,1,2`), or GPU UUIDs (e.g. `GPU-xxx`). Requires miner/validator authentication.
+  - Returns `{ "status": "ok" | "error", "message": "...", "gpu": "...", "exit_code": <int>, "timestamp": "ISO-8601" }`.
 - `GET /overview`
   - Collects the status for every allowlisted service plus a default `nvidia-smi` invocation.
   - Returns `{ "status": "ok" | "degraded", "services": [...], "gpu": {...}, "timestamp": "ISO-8601" }`.
@@ -45,8 +50,9 @@ All other paths return 404.
 
 ## Security Model
 
-1. **Read-only execution**
-   - Only `systemctl show`, `journalctl -u`, and `nvidia-smi` commands are ever issued. Parameterization is handled server-side through validated inputs (service ids, bounded integers, boolean flags).
+1. **Read-only execution (with limited state-changing exceptions)**
+   - Only `systemctl show`, `journalctl -u`, `nvidia-smi`, and `sudo nvidia-smi --gpu-reset` commands are ever issued. Parameterization is handled server-side through validated inputs (service ids, bounded integers, boolean flags).
+   - GPU reset (`POST /gpu/reset`) is a state-changing operation that requires root via sudo; it is explicitly allowlisted for clearing CUDA state between deployments.
    - `subprocess` calls are made with `shell=False`, preventing shell interpolation or arbitrary redirection.
    - Each command has a strict timeout (default 10 seconds) and the stdout/stderr is size-limited before returning to the caller.
 

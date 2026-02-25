@@ -110,3 +110,11 @@ class ShutdownResponse(BaseModel):
     status: str = Field(..., description="Shutdown status", example="initiated")
     message: str = Field(..., description="Shutdown message")
     timestamp: str = Field(..., description="ISO 8601 timestamp of shutdown request")
+
+
+class GpuResetResponse(BaseModel):
+    status: str = Field(..., description="Reset status", example="ok")
+    message: str = Field(..., description="Reset result message")
+    gpu: str = Field(..., description="GPU indices/UUIDs (comma-separated) or 'all'")
+    exit_code: int = Field(..., description="nvidia-smi exit code")
+    timestamp: str = Field(..., description="ISO 8601 timestamp")

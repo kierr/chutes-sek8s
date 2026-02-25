@@ -199,3 +199,110 @@ def test_overview_degraded_on_service_failure(status_client, fake_runner):
     data = response.json()
     assert data["status"] == "degraded"
     assert any(entry.get("error") for entry in data["services"])
+
+
+def test_gpu_reset_all(status_client, fake_runner):
+    fake_runner.set_response(
+        "sudo",
+        CommandResult(
+            exit_code=0,
+            stdout="GPU reset successful",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+        ),
+    )
+
+    response = status_client.post("/status/gpu/reset")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["gpu"] == "all"
+    assert data["exit_code"] == 0
+    assert "timestamp" in data
+    assert fake_runner.commands[-1] == ["sudo", "/usr/bin/nvidia-smi", "--gpu-reset"]
+
+
+def test_gpu_reset_single_gpu(status_client, fake_runner):
+    fake_runner.set_response(
+        "sudo",
+        CommandResult(
+            exit_code=0,
+            stdout="GPU 0 reset successful",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+        ),
+    )
+
+    response = status_client.post("/status/gpu/reset?gpu=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["gpu"] == "0"
+    assert data["exit_code"] == 0
+    assert fake_runner.commands[-1] == ["sudo", "/usr/bin/nvidia-smi", "--gpu-reset", "-i", "0"]
+
+
+def test_gpu_reset_invalid_gpu(status_client):
+    response = status_client.post("/status/gpu/reset?gpu=,,,")
+    assert response.status_code == 400
+
+
+def test_gpu_reset_multiple_indices(status_client, fake_runner):
+    fake_runner.set_response(
+        "sudo",
+        CommandResult(
+            exit_code=0,
+            stdout="GPUs 0,1,2 reset successful",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+        ),
+    )
+
+    response = status_client.post("/status/gpu/reset?gpu=0,1,2")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["gpu"] == "0,1,2"
+    assert data["exit_code"] == 0
+    assert fake_runner.commands[-1] == [
+        "sudo",
+        "/usr/bin/nvidia-smi",
+        "--gpu-reset",
+        "-i",
+        "0,1,2",
+    ]
+
+
+def test_gpu_reset_uuid(status_client, fake_runner):
+    fake_runner.set_response(
+        "sudo",
+        CommandResult(
+            exit_code=0,
+            stdout="GPU reset successful",
+            stderr="",
+            stdout_truncated=False,
+            stderr_truncated=False,
+        ),
+    )
+
+    response = status_client.post(
+        "/status/gpu/reset?gpu=GPU-12345678-1234-1234-1234-123456789abc"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert fake_runner.commands[-1] == [
+        "sudo",
+        "/usr/bin/nvidia-smi",
+        "--gpu-reset",
+        "-i",
+        "GPU-12345678-1234-1234-1234-123456789abc",
+    ]
+
+
+def test_gpu_reset_negative_index(status_client):
+    response = status_client.post("/status/gpu/reset?gpu=-1")
+    assert response.status_code == 400

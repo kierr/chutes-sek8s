@@ -12,7 +12,7 @@ from loguru import logger
 
 from sek8s.config import SystemStatusConfig
 
-from .models import CommandResult, ServiceDefinition, SERVICE_ALLOWLIST
+from .models import CommandResult, GpuResetResult, ServiceDefinition, SERVICE_ALLOWLIST
 from .responses import (
     DirectoryInfo,
     DiskSpaceResponse,
@@ -498,4 +498,56 @@ async def nvidia_smi_impl(detail: bool, gpu: str, get_config_fn) -> NvidiaSmiRes
         detail=detail,
         gpu=gpu,
         status="ok" if status_code == 200 else "error",
+    )
+
+
+def _parse_gpu_targets(gpu: str) -> list[str]:
+    """Parse gpu param into list of indices or UUIDs. Raises HTTPException on invalid input."""
+    if not gpu or gpu.strip().lower() == "all":
+        return []
+    parts = [p.strip() for p in gpu.split(",") if p.strip()]
+    if not parts:
+        raise HTTPException(
+            status_code=400, detail="gpu must be 'all' or a comma-separated list of indices or UUIDs"
+        )
+    validated: list[str] = []
+    for part in parts:
+        try:
+            idx = int(part)
+            if idx < 0:
+                raise HTTPException(
+                    status_code=400, detail=f"GPU index must be non-negative: {part}"
+                )
+            validated.append(part)
+        except ValueError:
+            validated.append(part)
+    return validated
+
+
+async def reset_gpus(gpu: str) -> GpuResetResult:
+    """Reset GPU(s) via nvidia-smi --gpu-reset. Requires sudo."""
+    config = SystemStatusConfig()
+    command = ["sudo", "/usr/bin/nvidia-smi", "--gpu-reset"]
+
+    targets = _parse_gpu_targets(gpu)
+    if targets:
+        command.extend(["-i", ",".join(targets)])
+
+    result = await run_command(
+        command, config.command_timeout_seconds, config.max_output_bytes
+    )
+
+    status = "ok" if result.exit_code == 0 else "error"
+    message = (
+        f"GPU reset {'succeeded' if result.exit_code == 0 else 'failed'} "
+        f"(exit_code={result.exit_code})"
+    )
+    if result.stderr and result.exit_code != 0:
+        message += f": {result.stderr[:200]}"
+
+    return GpuResetResult(
+        status=status,
+        message=message,
+        gpu=gpu,
+        exit_code=result.exit_code,
     )

@@ -527,6 +527,100 @@
         }
       }
     },
+    "/status/gpu/reset": {
+      "post": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Reset NVIDIA GPU(s)",
+        "description": "Resets GPU hardware/software state to clear CUDA state (e.g. after OOM). Requires miner/validator auth.",
+        "operationId": "gpu_reset_status_gpu_reset_post",
+        "parameters": [
+          {
+            "name": "gpu",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated GPU indices or UUIDs (e.g. '0,1,2' or 'GPU-xxx'); use 'all' to reset all GPUs",
+              "default": "all",
+              "title": "Gpu"
+            },
+            "description": "Comma-separated GPU indices or UUIDs (e.g. '0,1,2' or 'GPU-xxx'); use 'all' to reset all GPUs"
+          },
+          {
+            "name": "X-Chutes-Hotkey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Hotkey"
+            }
+          },
+          {
+            "name": "X-Chutes-Nonce",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Nonce"
+            }
+          },
+          {
+            "name": "X-Chutes-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chutes-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GpuResetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/status/overview": {
       "get": {
         "tags": [
@@ -1860,6 +1954,45 @@
           "used_percent"
         ],
         "title": "FilesystemInfo"
+      },
+      "GpuResetResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Reset status",
+            "example": "ok"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Reset result message"
+          },
+          "gpu": {
+            "type": "string",
+            "title": "Gpu",
+            "description": "GPU indices/UUIDs (comma-separated) or 'all'"
+          },
+          "exit_code": {
+            "type": "integer",
+            "title": "Exit Code",
+            "description": "nvidia-smi exit code"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "description": "ISO 8601 timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "gpu",
+          "exit_code",
+          "timestamp"
+        ],
+        "title": "GpuResetResponse"
       },
       "HTTPValidationError": {
         "properties": {
